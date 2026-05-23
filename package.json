@@ -14,14 +14,17 @@
     "pi-coding-agent"
   ],
   "files": [
-    "index.ts",
     "src/**/*.ts",
     "!src/**/*.test.ts",
     "README.md"
   ],
   "pi": {
     "extensions": [
-      "./index.ts"
+      "./src/bfs.ts",
+      "./src/context-preloader.ts",
+      "./src/git.ts",
+      "./src/ripgrep.ts",
+      "./src/task-runner.ts"
     ]
   },
   "scripts": {
