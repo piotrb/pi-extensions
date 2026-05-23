@@ -265,6 +265,66 @@ export default function (pi: ExtensionAPI) {
     },
   })
 
+  // ── git_mv ──────────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_mv",
+    label: "git mv",
+    description: [
+      "Move or rename a file, directory, or symlink (git mv).",
+      "Only use when the user explicitly asks to move or rename files.",
+      "Updates the index automatically — no separate git add needed.",
+      "Use force=true to overwrite an existing destination file.",
+      "Use dryRun=true to preview what would happen without making changes.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      source: Type.Union([Type.String(), Type.Array(Type.String(), { minItems: 1 })], {
+        description: "Source path(s). When moving multiple files, destination must be a directory.",
+      }),
+      destination: Type.String({
+        description: "Destination path or directory.",
+      }),
+      force: Type.Optional(
+        Type.Boolean({
+          description: "Allow overwriting an existing file at the destination (-f).",
+        }),
+      ),
+      dryRun: Type.Optional(
+        Type.Boolean({
+          description: "Show what would be moved without actually moving anything (-n).",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["mv"]
+      if (params.force) args.push("--force")
+      if (params.dryRun) args.push("--dry-run")
+      const sources = Array.isArray(params.source) ? params.source : [params.source]
+      args.push(...sources, params.destination)
+      return runGit(args, ctx.cwd, signal, onUpdate)
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.force) flags.push("-f")
+      if (args.dryRun) flags.push("--dry-run")
+
+      const sources = Array.isArray(args.source) ? args.source : [args.source]
+      let text = theme.fg("toolTitle", theme.bold("git mv"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+      text += theme.fg("accent", " " + sources.join(" "))
+      text += theme.fg("dim", " → ")
+      text += theme.fg("accent", args.destination)
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      return renderGitResult(result, expanded, isPartial, theme, "moving…")
+    },
+  })
+
   // ── git_commit ─────────────────────────────────────────────────────────────
 
   pi.registerTool({
