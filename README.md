@@ -1,22 +1,38 @@
-# pi-extensions-wip
+# pi-core-tools
 
-Staging ground for pi coding-agent extensions.
+A collection of structured tool extensions for the [pi coding agent](https://github.com/earendil-works/pi-coding-agent).
 
 ## Extensions
 
-| File | Description |
-|------|-------------|
-| `bfs.ts` | Structured wrapper around the `bfs` breadth-first file finder |
-| `context-preloader.ts` | Preloads context files into the session |
-| `extension-utils.ts` | Shared utilities (spawnStreaming, etc.) — imported by other extensions |
-| `git.ts` | Structured tools for git staging and commit operations (`git_add`, `git_rm`, `git_commit`) |
-| `ripgrep.ts` | Structured wrapper around `rg` for file content search |
-| `task-runner.ts` | Safer structured replacement for the bash tool (allowlist-based) |
+| Source | Tools registered | Description |
+|--------|-----------------|-------------|
+| `src/bfs.ts` | `bfs` | Breadth-first file finder (wraps the `bfs` binary) |
+| `src/ripgrep.ts` | `ripgrep` | Structured file content search (wraps `rg`) |
+| `src/git.ts` | `git_add`, `git_rm`, `git_commit` | Typed git staging & commit operations |
+| `src/task-runner.ts` | `task` | Allowlist-based replacement for freeform bash |
+| `src/context-preloader.ts` | — | Preloads context files into the session on startup |
+| `src/extension-utils.ts` | — | Shared internal utility (`spawnStreaming`, etc.) |
 
-Extensions live in `.pi/extensions/` and are auto-discovered by pi when this is the project root.
+## Usage
 
-## Dependencies
+### As a pi package (recommended)
 
-- `bfs`, `git`, `ripgrep` all import from `./extension-utils.ts`
-- Install `bfs`: `brew install bfs`
-- Install `rg`: `brew install ripgrep`
+Add to your pi `settings.json`:
+
+```json
+{
+  "packages": ["path:/path/to/pi-core-tools"]
+}
+```
+
+### System requirements
+
+- `bfs`: `brew install bfs` / `apt install bfs`
+- `rg`: `brew install ripgrep` / `apt install ripgrep`
+
+## Development
+
+```sh
+pnpm install
+pnpm check      # format + lint + typecheck
+```
