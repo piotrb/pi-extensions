@@ -269,7 +269,7 @@ export default function (pi: ExtensionAPI) {
     renderResult(result, { expanded, isPartial }, theme) {
       const details = result.details as RunDetails | undefined
       const content = result.content[0]
-      const raw = content?.type === "text" ? content.text : ""
+      const raw = content.type === "text" ? content.text : ""
       const lines = raw.length > 0 ? raw.split("\n") : []
       const totalLines = lines.length
 

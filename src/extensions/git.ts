@@ -115,6 +115,7 @@ export default function (pi: ExtensionAPI) {
     label: "git add",
     description: [
       "Stage file changes for the next commit (git add).",
+      "Only use when the user explicitly asks to stage or commit files.",
       "Specify paths to stage individual files or directories.",
       "Use all=true to stage everything (-A: new, modified, and deleted files).",
       "Use update=true to stage only modifications and deletions to already-tracked files (-u).",
@@ -197,6 +198,7 @@ export default function (pi: ExtensionAPI) {
     label: "git rm",
     description: [
       "Remove files from the index and optionally the working tree (git rm).",
+      "Only use when the user explicitly asks to remove files from git tracking.",
       "Use cached=true to only remove from the index while keeping the file on disk",
       "(useful for untracking a file without deleting it).",
       "Use recursive=true when removing a directory.",
@@ -270,6 +272,7 @@ export default function (pi: ExtensionAPI) {
     label: "git commit",
     description: [
       "Record staged changes as a new commit (git commit).",
+      "Only use when the user explicitly asks to commit — do not commit automatically after edits.",
       "A commit message is required unless amend+noEdit is used.",
       "Use all=true to automatically stage modifications and deletions to tracked files (-a).",
       "Use amend=true to rewrite the most recent commit.",
