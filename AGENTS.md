@@ -21,19 +21,21 @@ pnpm check
 
 ```
 src/
-  bfs.ts               — bfs tool extension
-  context-preloader.ts — context preloader extension
-  extension-utils.ts   — shared internal utility (spawnStreaming etc.), not an extension entry point
-  git.ts               — git_add / git_rm / git_commit tools
-  ripgrep.ts           — ripgrep tool extension
-  task-runner.ts       — task-runner tool extension
+  extensions/
+    bfs.ts               — bfs tool extension
+    context-preloader.ts — context preloader extension
+    git.ts               — git_add / git_rm / git_commit tools
+    ripgrep.ts           — ripgrep tool extension
+    task-runner.ts       — task-runner tool extension
+  lib/
+    extension-utils.ts   — shared internal utility (spawnStreaming etc.)
 ```
 
-Each file in `src/` (except `extension-utils.ts`) exports a `default function (pi: ExtensionAPI): void` and is listed individually under `"pi": { "extensions": [...] }` in `package.json`.
+Each file in `src/extensions/` exports a `default function (pi: ExtensionAPI): void` and is listed individually under `"pi": { "extensions": [...] }` in `package.json`.
 
 ## Key rules
 
 - **Imports**: use `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` — never the old `@mariozechner/*` package names.
-- **extension-utils**: import shared utilities with a relative path: `import { spawnStreaming } from "./extension-utils.ts"`.
+- **extension-utils**: import shared utilities with a relative path: `import { spawnStreaming } from "../lib/extension-utils.ts"`.
 - **No barrel/index file**: extensions are listed directly in `package.json`, there is no `index.ts`.
 - **Module style**: ESM only (`"type": "module"`). NodeNext module resolution — local imports keep `.ts` extensions (pi's runtime handles them via jiti).

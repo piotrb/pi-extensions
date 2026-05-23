@@ -4,14 +4,14 @@ A collection of structured tool extensions for the [pi coding agent](https://git
 
 ## Extensions
 
-| Source | Tools registered | Description |
-|--------|-----------------|-------------|
-| `src/bfs.ts` | `bfs` | Breadth-first file finder (wraps the `bfs` binary) |
-| `src/ripgrep.ts` | `ripgrep` | Structured file content search (wraps `rg`) |
-| `src/git.ts` | `git_add`, `git_rm`, `git_commit` | Typed git staging & commit operations |
-| `src/task-runner.ts` | `task` | Allowlist-based replacement for freeform bash |
-| `src/context-preloader.ts` | — | Preloads context files into the session on startup |
-| `src/extension-utils.ts` | — | Shared internal utility (`spawnStreaming`, etc.) |
+| Source                     | Tools registered                  | Description                                        |
+| -------------------------- | --------------------------------- | -------------------------------------------------- |
+| `src/bfs.ts`               | `bfs`                             | Breadth-first file finder (wraps the `bfs` binary) |
+| `src/ripgrep.ts`           | `ripgrep`                         | Structured file content search (wraps `rg`)        |
+| `src/git.ts`               | `git_add`, `git_rm`, `git_commit` | Typed git staging & commit operations              |
+| `src/task-runner.ts`       | `task`                            | Allowlist-based replacement for freeform bash      |
+| `src/context-preloader.ts` | —                                 | Preloads context files into the session on startup |
+| `src/extension-utils.ts`   | —                                 | Shared internal utility (`spawnStreaming`, etc.)   |
 
 ## Usage
 

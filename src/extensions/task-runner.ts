@@ -21,24 +21,21 @@
  * allows `pnpm run …`.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
-import { existsSync, readFileSync } from "node:fs";
-import { spawnStreaming } from "./extension-utils.ts";
-import { homedir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
-import { Type } from "typebox";
+import { existsSync, readFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join, resolve as resolvePath } from "node:path"
+
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { Text } from "@earendil-works/pi-tui"
+import { Type } from "typebox"
+
+import { spawnStreaming } from "../lib/extension-utils.ts"
 
 // ─── defaults ────────────────────────────────────────────────────────────────
 
-const DEFAULT_ALLOWED: string[][] = [
-  ["pnpm"],
-  ["npm"],
-  ["bun"],
-  ["task"],
-];
+const DEFAULT_ALLOWED: string[][] = [["pnpm"], ["npm"], ["bun"], ["task"]]
 
-const DEFAULT_VISIBLE_LINES = 20;
+const DEFAULT_VISIBLE_LINES = 20
 
 // ─── config ──────────────────────────────────────────────────────────────────
 //
@@ -70,8 +67,8 @@ const DEFAULT_VISIBLE_LINES = 20;
 // }
 
 interface TaskRunnerConfig {
-  allowedCommands?: string[][];
-  replaceDefaults?: boolean;
+  allowedCommands?: string[][]
+  replaceDefaults?: boolean
 }
 
 function loadConfig(cwd: string): TaskRunnerConfig {
@@ -79,30 +76,30 @@ function loadConfig(cwd: string): TaskRunnerConfig {
     join(homedir(), ".pi", "agent", "task-runner.json"),
     join(homedir(), ".pi", "task-runner.json"),
     join(cwd, ".pi", "task-runner.json"),
-  ];
+  ]
 
-  let allowedCommands: string[][] = [];
-  let replaceDefaults = false;
+  let allowedCommands: string[][] = []
+  let replaceDefaults = false
 
   for (const p of paths) {
-    if (!existsSync(p)) continue;
+    if (!existsSync(p)) continue
     try {
-      const raw = JSON.parse(readFileSync(p, "utf-8")) as TaskRunnerConfig;
-      if (raw.replaceDefaults) replaceDefaults = true;
+      const raw = JSON.parse(readFileSync(p, "utf-8")) as TaskRunnerConfig
+      if (raw.replaceDefaults) replaceDefaults = true
       if (Array.isArray(raw.allowedCommands)) {
-        allowedCommands = [...allowedCommands, ...raw.allowedCommands];
+        allowedCommands = [...allowedCommands, ...raw.allowedCommands]
       }
     } catch {
       // ignore malformed config
     }
   }
 
-  return { allowedCommands, replaceDefaults };
+  return { allowedCommands, replaceDefaults }
 }
 
 function resolveAllowed(config: TaskRunnerConfig): string[][] {
-  const extra = config.allowedCommands ?? [];
-  return config.replaceDefaults ? extra : [...DEFAULT_ALLOWED, ...extra];
+  const extra = config.allowedCommands ?? []
+  return config.replaceDefaults ? extra : [...DEFAULT_ALLOWED, ...extra]
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -110,57 +107,57 @@ function resolveAllowed(config: TaskRunnerConfig): string[][] {
 function shellQuote(arg: string): string {
   // Only quote if the arg contains characters that need escaping
   if (/[^a-zA-Z0-9._\-/=:@%,+~]/.test(arg)) {
-    return "'" + arg.replace(/'/g, "'\\''") + "'";
+    return "'" + arg.replace(/'/g, "'\\''") + "'"
   }
-  return arg;
+  return arg
 }
 
 function formatCmd(cmd: string[]): string {
-  return cmd.map(shellQuote).join(" ");
+  return cmd.map(shellQuote).join(" ")
 }
 
 function matchesPattern(cmd: string[], pattern: string[]): boolean {
-  if (cmd.length < pattern.length) return false;
-  return pattern.every((part, i) => cmd[i] === part);
+  if (cmd.length < pattern.length) return false
+  return pattern.every((part, i) => cmd[i] === part)
 }
 
 function isAllowed(cmd: string[], allowed: string[][]): boolean {
-  return allowed.some((pattern) => matchesPattern(cmd, pattern));
+  return allowed.some((pattern) => matchesPattern(cmd, pattern))
 }
 
 // ─── tool details type ───────────────────────────────────────────────────────
 
 interface RunDetails {
-  cmd: string[];
-  cwd: string;
-  exitCode: number | null;
-  totalLines: number;
-  streaming?: boolean;
+  cmd: string[]
+  cwd: string
+  exitCode: number | null
+  totalLines: number
+  streaming?: boolean
 }
 
 // ─── extension ───────────────────────────────────────────────────────────────
 
 function buildDescription(cwd: string): string {
-  const config = loadConfig(cwd);
-  const allowed = resolveAllowed(config);
+  const config = loadConfig(cwd)
+  const allowed = resolveAllowed(config)
   // Unique by first element, preserving order
-  const seen = new Set<string>();
-  const launchers: string[] = [];
+  const seen = new Set<string>()
+  const launchers: string[] = []
   for (const pattern of allowed) {
-    const key = pattern[0];
+    const key = pattern[0]
     if (!seen.has(key)) {
-      seen.add(key);
-      launchers.push(key);
+      seen.add(key)
+      launchers.push(key)
     }
   }
-  const list = launchers.join(", ");
+  const list = launchers.join(", ")
   return [
     `Run a bash command. Limited to standard tool launchers: ${list}.`,
     "Pass cmd as an array of strings — no shell interpolation, no freeform strings.",
     "Disallowed commands return an error listing the permitted patterns.",
     "Extra launchers can be configured via task-runner.json at",
     "~/.pi/agent/, ~/.pi/, or .pi/ in the project root.",
-  ].join(" ");
+  ].join(" ")
 }
 
 export default function (pi: ExtensionAPI) {
@@ -189,24 +186,17 @@ export default function (pi: ExtensionAPI) {
     // ── execute ──────────────────────────────────────────────────────────────
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const config = loadConfig(ctx.cwd);
-      const allowed = resolveAllowed(config);
+      const config = loadConfig(ctx.cwd)
+      const allowed = resolveAllowed(config)
 
       // ── allowlist check ────────────────────────────────────────────────────
       if (!isAllowed(params.cmd, allowed)) {
-        const patternList = allowed
-          .map((p) => `  • ${formatCmd(p)}`)
-          .join("\n");
+        const patternList = allowed.map((p) => `  • ${formatCmd(p)}`).join("\n")
         return {
           content: [
             {
               type: "text" as const,
-              text: [
-                `Command not allowed: ${formatCmd(params.cmd)}`,
-                "",
-                "Allowed patterns:",
-                patternList,
-              ].join("\n"),
+              text: [`Command not allowed: ${formatCmd(params.cmd)}`, "", "Allowed patterns:", patternList].join("\n"),
             },
           ],
           details: {
@@ -214,17 +204,15 @@ export default function (pi: ExtensionAPI) {
             cwd: ctx.cwd,
             exitCode: -1,
             totalLines: 0,
-          } as RunDetails,
+          },
           isError: true,
-        };
+        }
       }
 
       // ── run ────────────────────────────────────────────────────────────────
-      const workingDir = params.cwd
-        ? resolvePath(ctx.cwd, params.cwd)
-        : ctx.cwd;
+      const workingDir = params.cwd ? resolvePath(ctx.cwd, params.cwd) : ctx.cwd
 
-      const [bin, ...args] = params.cmd;
+      const [bin, ...args] = params.cmd
 
       const { lines, exitCode, spawnError } = await spawnStreaming(bin, args, {
         cwd: workingDir,
@@ -239,99 +227,95 @@ export default function (pi: ExtensionAPI) {
               exitCode: null,
               totalLines: accumulated.length,
               streaming: true,
-            } as RunDetails,
-          });
+            },
+          })
         },
-      });
+      })
 
       if (spawnError) {
         return {
           content: [{ type: "text" as const, text: spawnError }],
-          details: { cmd: params.cmd, cwd: workingDir, exitCode: -1, totalLines: 0 } as RunDetails,
+          details: { cmd: params.cmd, cwd: workingDir, exitCode: -1, totalLines: 0 },
           isError: true,
-        };
+        }
       }
 
       return {
         content: [{ type: "text" as const, text: lines.join("\n") }],
-        details: { cmd: params.cmd, cwd: workingDir, exitCode, totalLines: lines.length } as RunDetails,
+        details: { cmd: params.cmd, cwd: workingDir, exitCode, totalLines: lines.length },
         isError: exitCode !== 0,
-      };
+      }
     },
 
     // ── renderCall ───────────────────────────────────────────────────────────
 
     renderCall(args, theme) {
-      let text = theme.fg("toolTitle", theme.bold("$ "));
-      text += theme.fg("accent", formatCmd(args.cmd));
+      let text = theme.fg("toolTitle", theme.bold("$ "))
+      text += theme.fg("accent", formatCmd(args.cmd))
       if (args.cwd) {
-        text += theme.fg("dim", `  (in ${args.cwd})`);
+        text += theme.fg("dim", `  (in ${args.cwd})`)
       }
       if (args.env && Object.keys(args.env).length > 0) {
         const envStr = Object.entries(args.env)
           .map(([k, v]) => `${k}=${shellQuote(v)}`)
-          .join(" ");
-        text += theme.fg("dim", `  env: ${envStr}`);
+          .join(" ")
+        text += theme.fg("dim", `  env: ${envStr}`)
       }
-      return new Text(text, 0, 0);
+      return new Text(text, 0, 0)
     },
 
     // ── renderResult ─────────────────────────────────────────────────────────
 
     renderResult(result, { expanded, isPartial }, theme) {
-      const details = result.details as RunDetails | undefined;
-      const content = result.content[0];
-      const raw = content?.type === "text" ? content.text : "";
-      const lines = raw.length > 0 ? raw.split("\n") : [];
-      const totalLines = lines.length;
+      const details = result.details as RunDetails | undefined
+      const content = result.content[0]
+      const raw = content?.type === "text" ? content.text : ""
+      const lines = raw.length > 0 ? raw.split("\n") : []
+      const totalLines = lines.length
 
       // ── streaming (partial) ───────────────────────────────────────────────
       if (isPartial) {
-        const tail = lines.slice(-DEFAULT_VISIBLE_LINES);
-        let text = theme.fg("warning", "▶ running…");
+        const tail = lines.slice(-DEFAULT_VISIBLE_LINES)
+        let text = theme.fg("warning", "▶ running…")
         if (tail.length > 0) {
-          const hidden = totalLines - tail.length;
+          const hidden = totalLines - tail.length
           if (hidden > 0) {
-            text += "\n" + theme.fg("muted", `  (${hidden} earlier lines)`);
+            text += "\n" + theme.fg("muted", `  (${hidden} earlier lines)`)
           }
-          text += "\n" + tail.map((l) => theme.fg("dim", l)).join("\n");
+          text += "\n" + tail.map((l) => theme.fg("dim", l)).join("\n")
         }
-        return new Text(text, 0, 0);
+        return new Text(text, 0, 0)
       }
 
       // ── finished ──────────────────────────────────────────────────────────
-      const exitCode = details?.exitCode ?? null;
-      const failed = exitCode !== null && exitCode !== 0;
+      const exitCode = details?.exitCode ?? null
+      const failed = exitCode !== null && exitCode !== 0
 
       // status badge
-      let text = failed
-        ? theme.fg("error", `✗ exit ${exitCode}`)
-        : theme.fg("success", "✓ done");
+      let text = failed ? theme.fg("error", `✗ exit ${exitCode}`) : theme.fg("success", "✓ done")
 
-      text += theme.fg("dim", `  ${totalLines} line${totalLines !== 1 ? "s" : ""}`);
+      text += theme.fg("dim", `  ${totalLines} line${totalLines !== 1 ? "s" : ""}`)
 
       if (totalLines === 0) {
-        text += theme.fg("muted", "  (no output)");
-        return new Text(text, 0, 0);
+        text += theme.fg("muted", "  (no output)")
+        return new Text(text, 0, 0)
       }
 
       if (expanded) {
         // show everything
-        text += "\n" + lines.map((l) => theme.fg("dim", l)).join("\n");
+        text += "\n" + lines.map((l) => theme.fg("dim", l)).join("\n")
       } else {
         // show first DEFAULT_VISIBLE_LINES, then a hint
-        const visible = lines.slice(0, DEFAULT_VISIBLE_LINES);
-        text += "\n" + visible.map((l) => theme.fg("dim", l)).join("\n");
+        const visible = lines.slice(0, DEFAULT_VISIBLE_LINES)
+        text += "\n" + visible.map((l) => theme.fg("dim", l)).join("\n")
 
-        const hidden = totalLines - visible.length;
+        const hidden = totalLines - visible.length
         if (hidden > 0) {
-          text +=
-            "\n" +
-            theme.fg("muted", `  (${hidden} more line${hidden !== 1 ? "s" : ""},  ctrl+o to expand)`);
+          text += "\n" + theme.fg("muted", `  (${hidden} more line${hidden !== 1 ? "s" : ""},  ctrl+o to expand)`)
         }
       }
 
-      return new Text(text, 0, 0);
+      return new Text(text, 0, 0)
     },
-  });
+  })
 }

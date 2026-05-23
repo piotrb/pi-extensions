@@ -12,20 +12,21 @@
  * Output is streamed in real time and truncated by default (ctrl+o to expand).
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
-import { spawnStreaming } from "./extension-utils.ts";
-import { Type } from "typebox";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { Text } from "@earendil-works/pi-tui"
+import { Type } from "typebox"
 
-const DEFAULT_VISIBLE_LINES = 30;
+import { spawnStreaming } from "../lib/extension-utils.ts"
+
+const DEFAULT_VISIBLE_LINES = 30
 
 // ─── details ─────────────────────────────────────────────────────────────────
 
 interface BfsDetails {
-  paths: string[];
-  totalLines: number;
-  exitCode: number | null;
-  streaming?: boolean;
+  paths: string[]
+  totalLines: number
+  exitCode: number | null
+  streaming?: boolean
 }
 
 // ─── extension ───────────────────────────────────────────────────────────────
@@ -49,8 +50,7 @@ export default function (pi: ExtensionAPI) {
       paths: Type.Optional(
         Type.Array(Type.String(), {
           description:
-            "Paths to search (default: current working directory). " +
-            "Multiple paths are searched in order.",
+            "Paths to search (default: current working directory). " + "Multiple paths are searched in order.",
         }),
       ),
 
@@ -125,26 +125,20 @@ export default function (pi: ExtensionAPI) {
       // ── hidden / ignore ───────────────────────────────────────────────────
       noHidden: Type.Optional(
         Type.Boolean({
-          description:
-            "Exclude hidden files and directories (names starting with '.'). " +
-            "Equivalent to -nohidden.",
+          description: "Exclude hidden files and directories (names starting with '.'). " + "Equivalent to -nohidden.",
         }),
       ),
       followSymlinks: Type.Optional(
-        Type.Union(
-          [Type.Literal("none"), Type.Literal("args"), Type.Literal("all")],
-          {
-            description:
-              "'none' = never follow (default), " +
-              "'args' = follow symlinks given as search paths only (-H), " +
-              "'all' = follow all symlinks (-L).",
-          },
-        ),
+        Type.Union([Type.Literal("none"), Type.Literal("args"), Type.Literal("all")], {
+          description:
+            "'none' = never follow (default), " +
+            "'args' = follow symlinks given as search paths only (-H), " +
+            "'all' = follow all symlinks (-L).",
+        }),
       ),
       noMountCross: Type.Optional(
         Type.Boolean({
-          description:
-            "Don't descend into directories on different filesystems/mount points (-xdev).",
+          description: "Don't descend into directories on different filesystems/mount points (-xdev).",
         }),
       ),
 
@@ -168,14 +162,12 @@ export default function (pi: ExtensionAPI) {
       ),
       since: Type.Optional(
         Type.String({
-          description:
-            "Match files modified since the given timestamp, e.g. '2024-01-01'.",
+          description: "Match files modified since the given timestamp, e.g. '2024-01-01'.",
         }),
       ),
       mtime: Type.Optional(
         Type.String({
-          description:
-            "Match files modified N days ago. Prefix with + (more than) or - (less than). e.g. '-7', '+30'.",
+          description: "Match files modified N days ago. Prefix with + (more than) or - (less than). e.g. '-7', '+30'.",
         }),
       ),
 
@@ -206,8 +198,7 @@ export default function (pi: ExtensionAPI) {
       ),
       unique: Type.Optional(
         Type.Boolean({
-          description:
-            "Skip files already seen (useful when symlinks could cause duplicates).",
+          description: "Skip files already seen (useful when symlinks could cause duplicates).",
         }),
       ),
       depthFirst: Type.Optional(
@@ -230,59 +221,55 @@ export default function (pi: ExtensionAPI) {
     // ── execute ──────────────────────────────────────────────────────────────
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const bfsArgs: string[] = [];
+      const bfsArgs: string[] = []
 
       // ── symlink flags (must come first) ───────────────────────────────────
-      if (params.followSymlinks === "args") bfsArgs.push("-H");
-      else if (params.followSymlinks === "all") bfsArgs.push("-L");
+      if (params.followSymlinks === "args") bfsArgs.push("-H")
+      else if (params.followSymlinks === "all") bfsArgs.push("-L")
 
       // ── always use extended regex so the regex param is intuitive ─────────
-      if (params.regex) bfsArgs.push("-E");
+      if (params.regex) bfsArgs.push("-E")
 
       // ── sorted traversal ─────────────────────────────────────────────────
-      if (params.sorted) bfsArgs.push("-s");
+      if (params.sorted) bfsArgs.push("-s")
 
       // ── search paths ──────────────────────────────────────────────────────
       if (params.paths && params.paths.length > 0) {
-        bfsArgs.push(...params.paths);
+        bfsArgs.push(...params.paths)
       }
 
       // ── options ───────────────────────────────────────────────────────────
-      if (params.maxDepth != null) bfsArgs.push("-maxdepth", String(params.maxDepth));
-      if (params.minDepth != null) bfsArgs.push("-mindepth", String(params.minDepth));
-      if (params.noHidden) bfsArgs.push("-nohidden");
-      if (params.noMountCross) bfsArgs.push("-xdev");
-      if (params.depthFirst) bfsArgs.push("-depth");
-      if (params.unique) bfsArgs.push("-unique");
+      if (params.maxDepth != null) bfsArgs.push("-maxdepth", String(params.maxDepth))
+      if (params.minDepth != null) bfsArgs.push("-mindepth", String(params.minDepth))
+      if (params.noHidden) bfsArgs.push("-nohidden")
+      if (params.noMountCross) bfsArgs.push("-xdev")
+      if (params.depthFirst) bfsArgs.push("-depth")
+      if (params.unique) bfsArgs.push("-unique")
 
       // ── exclude globs ─────────────────────────────────────────────────────
-      const excludes = params.exclude
-        ? Array.isArray(params.exclude)
-          ? params.exclude
-          : [params.exclude]
-        : [];
+      const excludes = params.exclude ? (Array.isArray(params.exclude) ? params.exclude : [params.exclude]) : []
       for (const ex of excludes) {
-        bfsArgs.push("-exclude", "-name", ex);
+        bfsArgs.push("-exclude", "-name", ex)
       }
 
       // ── tests ─────────────────────────────────────────────────────────────
-      if (params.name) bfsArgs.push("-name", params.name);
-      if (params.iname) bfsArgs.push("-iname", params.iname);
-      if (params.path) bfsArgs.push("-path", params.path);
-      if (params.ipath) bfsArgs.push("-ipath", params.ipath);
-      if (params.regex) bfsArgs.push("-regex", params.regex);
-      if (params.type) bfsArgs.push("-type", params.type);
-      if (params.size) bfsArgs.push("-size", params.size);
-      if (params.empty) bfsArgs.push("-empty");
-      if (params.newer) bfsArgs.push("-newer", params.newer);
-      if (params.since) bfsArgs.push("-since", params.since);
-      if (params.mtime) bfsArgs.push("-mtime", params.mtime);
-      if (params.executable) bfsArgs.push("-executable");
-      if (params.readable) bfsArgs.push("-readable");
-      if (params.writable) bfsArgs.push("-writable");
+      if (params.name) bfsArgs.push("-name", params.name)
+      if (params.iname) bfsArgs.push("-iname", params.iname)
+      if (params.path) bfsArgs.push("-path", params.path)
+      if (params.ipath) bfsArgs.push("-ipath", params.ipath)
+      if (params.regex) bfsArgs.push("-regex", params.regex)
+      if (params.type) bfsArgs.push("-type", params.type)
+      if (params.size) bfsArgs.push("-size", params.size)
+      if (params.empty) bfsArgs.push("-empty")
+      if (params.newer) bfsArgs.push("-newer", params.newer)
+      if (params.since) bfsArgs.push("-since", params.since)
+      if (params.mtime) bfsArgs.push("-mtime", params.mtime)
+      if (params.executable) bfsArgs.push("-executable")
+      if (params.readable) bfsArgs.push("-readable")
+      if (params.writable) bfsArgs.push("-writable")
 
       // ── always print — no -delete or -exec allowed ───────────────────────
-      bfsArgs.push("-print");
+      bfsArgs.push("-print")
 
       const { lines, exitCode, spawnError } = await spawnStreaming("bfs", bfsArgs, {
         cwd: ctx.cwd,
@@ -296,152 +283,137 @@ export default function (pi: ExtensionAPI) {
               totalLines: accumulated.length,
               exitCode: null,
               streaming: true,
-            } as BfsDetails,
-          });
+            },
+          })
         },
-      });
+      })
 
       if (spawnError) {
         return {
           content: [{ type: "text" as const, text: spawnError }],
-          details: { paths: params.paths ?? [], totalLines: 0, exitCode: -1 } as BfsDetails,
+          details: { paths: params.paths ?? [], totalLines: 0, exitCode: -1 },
           isError: true,
-        };
+        }
       }
 
       return {
         content: [{ type: "text" as const, text: lines.length === 0 ? "No results found." : lines.join("\n") }],
-        details: { paths: params.paths ?? [], totalLines: lines.length, exitCode } as BfsDetails,
+        details: { paths: params.paths ?? [], totalLines: lines.length, exitCode },
         isError: exitCode !== 0,
-      };
+      }
     },
 
     // ── renderCall ───────────────────────────────────────────────────────────
 
     renderCall(args, theme) {
-      const flags: string[] = [];
+      const flags: string[] = []
 
-      if (args.followSymlinks === "args") flags.push("-H");
-      else if (args.followSymlinks === "all") flags.push("-L");
-      if (args.sorted) flags.push("-s");
-      if (args.depthFirst) flags.push("-depth");
-      if (args.noHidden) flags.push("-nohidden");
-      if (args.noMountCross) flags.push("-xdev");
-      if (args.unique) flags.push("-unique");
-      if (args.maxDepth != null) flags.push(`-maxdepth ${args.maxDepth}`);
-      if (args.minDepth != null) flags.push(`-mindepth ${args.minDepth}`);
-      if (args.type) flags.push(`-type ${args.type}`);
-      if (args.name) flags.push(`-name '${args.name}'`);
-      if (args.iname) flags.push(`-iname '${args.iname}'`);
-      if (args.path) flags.push(`-path '${args.path}'`);
-      if (args.ipath) flags.push(`-ipath '${args.ipath}'`);
-      if (args.regex) flags.push(`-regex '${args.regex}'`);
-      if (args.size) flags.push(`-size ${args.size}`);
-      if (args.empty) flags.push("-empty");
-      if (args.newer) flags.push(`-newer ${args.newer}`);
-      if (args.since) flags.push(`-since '${args.since}'`);
-      if (args.mtime) flags.push(`-mtime ${args.mtime}`);
-      if (args.executable) flags.push("-executable");
-      if (args.readable) flags.push("-readable");
-      if (args.writable) flags.push("-writable");
+      if (args.followSymlinks === "args") flags.push("-H")
+      else if (args.followSymlinks === "all") flags.push("-L")
+      if (args.sorted) flags.push("-s")
+      if (args.depthFirst) flags.push("-depth")
+      if (args.noHidden) flags.push("-nohidden")
+      if (args.noMountCross) flags.push("-xdev")
+      if (args.unique) flags.push("-unique")
+      if (args.maxDepth != null) flags.push(`-maxdepth ${args.maxDepth}`)
+      if (args.minDepth != null) flags.push(`-mindepth ${args.minDepth}`)
+      if (args.type) flags.push(`-type ${args.type}`)
+      if (args.name) flags.push(`-name '${args.name}'`)
+      if (args.iname) flags.push(`-iname '${args.iname}'`)
+      if (args.path) flags.push(`-path '${args.path}'`)
+      if (args.ipath) flags.push(`-ipath '${args.ipath}'`)
+      if (args.regex) flags.push(`-regex '${args.regex}'`)
+      if (args.size) flags.push(`-size ${args.size}`)
+      if (args.empty) flags.push("-empty")
+      if (args.newer) flags.push(`-newer ${args.newer}`)
+      if (args.since) flags.push(`-since '${args.since}'`)
+      if (args.mtime) flags.push(`-mtime ${args.mtime}`)
+      if (args.executable) flags.push("-executable")
+      if (args.readable) flags.push("-readable")
+      if (args.writable) flags.push("-writable")
 
-      const excludes = args.exclude
-        ? Array.isArray(args.exclude)
-          ? args.exclude
-          : [args.exclude]
-        : [];
-      for (const ex of excludes) flags.push(`-exclude -name '${ex}'`);
+      const excludes = args.exclude ? (Array.isArray(args.exclude) ? args.exclude : [args.exclude]) : []
+      for (const ex of excludes) flags.push(`-exclude -name '${ex}'`)
 
-      const searchPaths =
-        args.paths && args.paths.length > 0 ? args.paths.join(" ") : ".";
+      const searchPaths = args.paths && args.paths.length > 0 ? args.paths.join(" ") : "."
 
-      let text = theme.fg("toolTitle", theme.bold("bfs "));
-      text += theme.fg("accent", searchPaths);
+      let text = theme.fg("toolTitle", theme.bold("bfs "))
+      text += theme.fg("accent", searchPaths)
       if (flags.length > 0) {
-        text += theme.fg("dim", "  " + flags.join("  "));
+        text += theme.fg("dim", "  " + flags.join("  "))
       }
 
-      return new Text(text, 0, 0);
+      return new Text(text, 0, 0)
     },
 
     // ── renderResult ─────────────────────────────────────────────────────────
 
     renderResult(result, { expanded, isPartial }, theme) {
-      const details = result.details as BfsDetails | undefined;
-      const content = result.content[0];
-      const raw = content?.type === "text" ? content.text : "";
-      const lines = raw.length > 0 ? raw.split("\n") : [];
-      const totalLines = lines.length;
+      const details = result.details as BfsDetails | undefined
+      const content = result.content[0]
+      const raw = content?.type === "text" ? content.text : ""
+      const lines = raw.length > 0 ? raw.split("\n") : []
+      const totalLines = lines.length
 
       // ── streaming ─────────────────────────────────────────────────────────
       if (isPartial) {
-        const tail = lines.slice(-DEFAULT_VISIBLE_LINES);
-        let text = theme.fg("warning", "▶ searching…");
-        const hidden = totalLines - tail.length;
+        const tail = lines.slice(-DEFAULT_VISIBLE_LINES)
+        let text = theme.fg("warning", "▶ searching…")
+        const hidden = totalLines - tail.length
         if (hidden > 0) {
-          text += "\n" + theme.fg("muted", `  (${hidden} earlier results)`);
+          text += "\n" + theme.fg("muted", `  (${hidden} earlier results)`)
         }
         if (tail.length > 0) {
-          text += "\n" + tail.map((l) => renderPath(l, theme)).join("\n");
+          text += "\n" + tail.map((l) => renderPath(l, theme)).join("\n")
         }
-        return new Text(text, 0, 0);
+        return new Text(text, 0, 0)
       }
 
       // ── error ─────────────────────────────────────────────────────────────
       if (details?.exitCode !== 0 && details?.exitCode != null) {
-        const errLine = lines[0] ?? "bfs error";
-        return new Text(theme.fg("error", `✗ ${errLine}`), 0, 0);
+        const errLine = lines[0] ?? "bfs error"
+        return new Text(theme.fg("error", `✗ ${errLine}`), 0, 0)
       }
 
       // ── no results ────────────────────────────────────────────────────────
       if (totalLines === 0) {
-        return new Text(theme.fg("muted", "No results found."), 0, 0);
+        return new Text(theme.fg("muted", "No results found."), 0, 0)
       }
 
       // ── results ───────────────────────────────────────────────────────────
-      let text = theme.fg("success", `${totalLines} result${totalLines !== 1 ? "s" : ""}`);
+      let text = theme.fg("success", `${totalLines} result${totalLines !== 1 ? "s" : ""}`)
 
       if (expanded) {
-        text += "\n" + lines.map((l) => renderPath(l, theme)).join("\n");
+        text += "\n" + lines.map((l) => renderPath(l, theme)).join("\n")
       } else {
-        const visible = lines.slice(0, DEFAULT_VISIBLE_LINES);
-        text += "\n" + visible.map((l) => renderPath(l, theme)).join("\n");
-        const hidden = totalLines - visible.length;
+        const visible = lines.slice(0, DEFAULT_VISIBLE_LINES)
+        text += "\n" + visible.map((l) => renderPath(l, theme)).join("\n")
+        const hidden = totalLines - visible.length
         if (hidden > 0) {
-          text +=
-            "\n" +
-            theme.fg(
-              "muted",
-              `  (${hidden} more result${hidden !== 1 ? "s" : ""},  ctrl+o to expand)`,
-            );
+          text += "\n" + theme.fg("muted", `  (${hidden} more result${hidden !== 1 ? "s" : ""},  ctrl+o to expand)`)
         }
       }
 
-      return new Text(text, 0, 0);
+      return new Text(text, 0, 0)
     },
-  });
+  })
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-type Theme = Parameters<
-  NonNullable<Parameters<ExtensionAPI["registerTool"]>[0]["renderResult"]>
->[2];
+type Theme = Parameters<NonNullable<Parameters<ExtensionAPI["registerTool"]>[0]["renderResult"]>>[2]
 
 /**
  * Colour a path line from bfs output.
  * Highlights the basename differently from the directory portion.
  */
 function renderPath(line: string, theme: Theme): string {
-  if (!line) return "";
-  const slash = line.lastIndexOf("/");
-  if (slash === -1) return theme.fg("accent", line);
-  const dir = line.slice(0, slash + 1);
-  const base = line.slice(slash + 1);
+  if (!line) return ""
+  const slash = line.lastIndexOf("/")
+  if (slash === -1) return theme.fg("accent", line)
+  const dir = line.slice(0, slash + 1)
+  const base = line.slice(slash + 1)
   // Distinguish directories (no extension / trailing slash) from files
-  const isDir = base === "" || !base.includes(".");
-  return (
-    theme.fg("dim", dir) +
-    theme.fg(isDir ? "warning" : "accent", base)
-  );
+  const isDir = base === "" || !base.includes(".")
+  return theme.fg("dim", dir) + theme.fg(isDir ? "warning" : "accent", base)
 }

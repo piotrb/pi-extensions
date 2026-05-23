@@ -20,29 +20,31 @@
   ],
   "pi": {
     "extensions": [
-      "./src/bfs.ts",
-      "./src/context-preloader.ts",
-      "./src/git.ts",
-      "./src/ripgrep.ts",
-      "./src/task-runner.ts"
+      "./src/extensions/bfs.ts",
+      "./src/extensions/context-preloader.ts",
+      "./src/extensions/git.ts",
+      "./src/extensions/ripgrep.ts",
+      "./src/extensions/task-runner.ts"
     ]
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "check": "pnpm format && pnpm lint && pnpm typecheck"
+    "check": "pnpm format && pnpm lint && tsc --noEmit"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "@types/node": "^22",
+    "typebox": "^1.1.38",
     "typescript": "5.9.3",
     "eslint": "^9.0.0",
     "typescript-eslint": "^8.0.0",
