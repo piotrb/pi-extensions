@@ -362,75 +362,53 @@ export default function (pi: ExtensionAPI) {
     name: "git_add",
     label: "git add",
     description: [
-      "Stage file changes for the next commit (git add).",
+      "Stage specific files or directories for the next commit (git add).",
       "Only use when the user explicitly asks to stage or commit files.",
-      "Specify paths to stage individual files or directories.",
-      "Use all=true to stage everything (-A: new, modified, and deleted files).",
-      "Use update=true to stage only modifications and deletions to already-tracked files (-u).",
+      "Provide explicit paths — do not stage blindly.",
+      "Use trackedOnly=true to stage modifications and deletions across all tracked files without listing them individually.",
     ].join(" "),
 
     parameters: Type.Object({
       paths: Type.Optional(
         Type.Array(Type.String(), {
           description:
-            "Files or directories to stage. Supports pathspecs and globs. " + "Required unless all or update is true.",
+            "Files or directories to stage. Supports pathspecs and globs. " + "Required unless trackedOnly is true.",
         }),
       ),
-      all: Type.Optional(
+      trackedOnly: Type.Optional(
         Type.Boolean({
           description:
-            "Stage all changes in the working tree: new files, modifications, and deletions (-A). " +
-            "Equivalent to git add -A.",
-        }),
-      ),
-      update: Type.Optional(
-        Type.Boolean({
-          description:
-            "Stage modifications and deletions to already-tracked files only; " +
-            "does not stage untracked new files (-u).",
-        }),
-      ),
-      force: Type.Optional(
-        Type.Boolean({
-          description: "Allow staging files that are otherwise ignored by .gitignore (-f). " + "Use with care.",
+            "Stage modifications and deletions to already-tracked files only (-u). " +
+            "Does not stage untracked new files. Use instead of listing every path when staging all tracked changes.",
         }),
       ),
       dryRun: Type.Optional(
         Type.Boolean({
-          description: "Don't actually stage anything; just show what would be added (-n).",
+          description: "Show what would be staged without actually staging anything (-n).",
         }),
       ),
     }),
 
     async execute(_id, params, signal, onUpdate, ctx) {
       const args: string[] = ["add"]
-      if (params.force) args.push("--force")
       if (params.dryRun) args.push("--dry-run")
-      if (params.all) args.push("--all")
-      else if (params.update) args.push("--update")
-      args.push("--")
-      if (params.paths && params.paths.length > 0) args.push(...params.paths)
+      if (params.trackedOnly) {
+        args.push("--update")
+      } else {
+        args.push("--")
+        if (params.paths && params.paths.length > 0) args.push(...params.paths)
+      }
       return runGit(args, ctx.cwd, signal, onUpdate)
     },
 
     renderCall(args, theme) {
-      const flags: string[] = []
-      if (args.all) flags.push("-A")
-      else if (args.update) flags.push("-u")
-      if (args.force) flags.push("-f")
-      if (args.dryRun) flags.push("--dry-run")
-
       let text = theme.fg("toolTitle", theme.bold("git add"))
-      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
-
-      if (args.all) {
-        text += theme.fg("accent", " (all changes)")
-      } else if (args.update) {
+      if (args.dryRun) text += theme.fg("dim", " --dry-run")
+      if (args.trackedOnly) {
         text += theme.fg("accent", " (tracked files)")
       } else if (args.paths && args.paths.length > 0) {
         text += theme.fg("accent", " " + args.paths.join(" "))
       }
-
       return new Text(text, 0, 0)
     },
 
