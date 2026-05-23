@@ -33,7 +33,7 @@ import { spawnStreaming } from "../lib/extension-utils.ts"
 
 // ─── defaults ────────────────────────────────────────────────────────────────
 
-const DEFAULT_ALLOWED: string[][] = [["pnpm"], ["npm"], ["bun"], ["task"]]
+const DEFAULT_ALLOWED: string[][] = [["pnpm", "run"], ["npm", "run"], ["bun", "run"], ["task"]]
 
 const DEFAULT_VISIBLE_LINES = 20
 

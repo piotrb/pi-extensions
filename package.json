@@ -33,7 +33,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "check": "pnpm format && pnpm lint && tsc --noEmit"
+    "check": "pnpm typecheck && pnpm format && pnpm lint"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

@@ -8,7 +8,7 @@
 pnpm check
 ```
 
-This runs `prettier --check`, `eslint`, and `tsc --noEmit` in sequence. Fix all errors before moving on. Do not batch edits and check at the end — run after each individual edit so failures are easy to localise.
+This runs `tsc --noEmit`, `prettier --check`, and `eslint` in sequence. Fix all errors before moving on. Do not batch edits and check at the end — run after each individual edit so failures are easy to localise.
 
 If `pnpm check` is not available (e.g. `node_modules` not installed), run:
 

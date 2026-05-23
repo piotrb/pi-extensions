@@ -191,7 +191,7 @@ export default function (pi: ExtensionAPI): void {
   // Shows the dependency tree on demand.
   pi.registerCommand("preloaded", {
     description: "Show dependency tree of files preloaded from @refs in AGENTS.md",
-    handler: (_args, ctx) => {
+    handler: async (_args, ctx) => {
       if (!cachedSections || cachedSections.length === 0) {
         ctx.ui.notify("context-preloader: no @refs loaded", "info")
         return
@@ -214,7 +214,7 @@ export default function (pi: ExtensionAPI): void {
       const cwd = event.systemPromptOptions.cwd
       const visited = new Set<string>()
       sections = []
-      for (const file of event.systemPromptOptions.contextFiles) {
+      for (const file of event.systemPromptOptions.contextFiles ?? []) {
         const nodes = resolveRefs(file.content, cwd, visited, 1)
         sections.push(...flattenNodes(nodes))
       }
