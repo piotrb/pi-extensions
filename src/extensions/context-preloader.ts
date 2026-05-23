@@ -110,6 +110,7 @@ function renderTree(nodes: RefNode[], cwd: string, prefix = ""): string[] {
 function findAgentsMd(cwd: string): string[] {
   const files: string[] = []
   let dir = cwd
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     const candidate = join(dir, "AGENTS.md")
     if (existsSync(candidate)) files.push(candidate)
@@ -143,7 +144,7 @@ export default function (pi: ExtensionAPI): void {
 
   // Fires right after the [Context]/[Skills]/[Extensions] display on startup + reload.
   // Pre-scans @refs and caches for injection.
-  pi.on("resources_discover", async (event, ctx) => {
+  pi.on("resources_discover", (event, ctx) => {
     const cwd = event.cwd
     const agentFiles = findAgentsMd(cwd)
     if (agentFiles.length === 0) {
@@ -191,6 +192,7 @@ export default function (pi: ExtensionAPI): void {
   // Shows the dependency tree on demand.
   pi.registerCommand("preloaded", {
     description: "Show dependency tree of files preloaded from @refs in AGENTS.md",
+    // eslint-disable-next-line @typescript-eslint/require-await
     handler: async (_args, ctx) => {
       if (!cachedSections || cachedSections.length === 0) {
         ctx.ui.notify("context-preloader: no @refs loaded", "info")

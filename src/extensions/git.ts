@@ -73,7 +73,7 @@ function renderGitResult(
 ): InstanceType<typeof Text> {
   const details = result.details as GitDetails | undefined
   const content = result.content[0]
-  const raw = content?.type === "text" ? (content as { type: string; text: string }).text : ""
+  const raw = content.type === "text" ? (content as { type: string; text: string }).text : ""
   const lines = raw.length > 0 ? raw.split("\n") : []
   const totalLines = lines.length
 
@@ -87,7 +87,7 @@ function renderGitResult(
   }
 
   const failed = details?.exitCode !== 0 && details?.exitCode != null
-  let text = failed ? theme.fg("error", `✗ exit ${details?.exitCode}`) : theme.fg("success", "✓ done")
+  let text = failed ? theme.fg("error", `✗ exit ${details.exitCode}`) : theme.fg("success", "✓ done")
 
   if (totalLines > 0) {
     if (expanded) {
@@ -384,13 +384,13 @@ export default function (pi: ExtensionAPI) {
 
       const details = result.details as GitDetails | undefined
       const content = result.content[0]
-      const raw = content?.type === "text" ? (content as { type: string; text: string }).text : ""
+      const raw = content.type === "text" ? (content as { type: string; text: string }).text : ""
       const lines = raw.length > 0 ? raw.split("\n") : []
       const totalLines = lines.length
       const failed = details?.exitCode !== 0 && details?.exitCode != null
 
       if (failed) {
-        let text = theme.fg("error", `✗ exit ${details?.exitCode}`)
+        let text = theme.fg("error", `✗ exit ${details.exitCode}`)
         const visible = lines.slice(0, 20)
         if (visible.length > 0) {
           text += "\n" + visible.map((l) => theme.fg("dim", l)).join("\n")
@@ -413,7 +413,7 @@ export default function (pi: ExtensionAPI) {
         // Highlight the sha portion inside [branch sha]
         const styled = header.replace(
           /\[([^\s]+)\s([0-9a-f]+)\]/,
-          (_m, branch, sha) =>
+          (_m: string, branch: string, sha: string) =>
             theme.fg("dim", "[") +
             theme.fg("warning", branch) +
             theme.fg("dim", " ") +
