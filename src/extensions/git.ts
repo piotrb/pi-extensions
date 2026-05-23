@@ -1,9 +1,11 @@
 /**
  * git — structured tools for common git staging and commit operations.
  *
- * Exposes three tools:
+ * Exposes four tools:
+ *   git_status — show working tree status (parsed porcelain v2 → JSON)
  *   git_add    — stage files (git add)
  *   git_rm     — remove files from index / working tree (git rm)
+ *   git_mv     — move or rename files (git mv)
  *   git_commit — record a commit (git commit)
  *
  * Each tool runs the real git binary, streams output, and renders a compact
@@ -27,6 +29,132 @@ interface GitDetails {
 }
 
 type Theme = Parameters<NonNullable<Parameters<ExtensionAPI["registerTool"]>[0]["renderResult"]>>[2]
+
+// ─── porcelain v2 parser ─────────────────────────────────────────────────────
+
+interface BranchInfo {
+  oid: string
+  head: string
+  upstream?: string
+  ahead?: number
+  behind?: number
+}
+
+interface OrdinaryEntry {
+  type: "ordinary"
+  indexStatus: string
+  worktreeStatus: string
+  path: string
+}
+
+interface RenamedEntry {
+  type: "renamed"
+  indexStatus: string
+  worktreeStatus: string
+  path: string
+  origPath: string
+  score: number
+}
+
+interface UnmergedEntry {
+  type: "unmerged"
+  indexStatus: string
+  worktreeStatus: string
+  path: string
+}
+
+interface UntrackedEntry {
+  type: "untracked"
+  path: string
+}
+
+type StatusEntry = OrdinaryEntry | RenamedEntry | UnmergedEntry | UntrackedEntry
+
+interface GitStatus {
+  branch: BranchInfo
+  entries: StatusEntry[]
+  stats: { staged: number; unstaged: number; untracked: number; unmerged: number }
+}
+
+function parsePorcelainV2(lines: string[]): GitStatus {
+  const branch: BranchInfo = { oid: "", head: "" }
+  const entries: StatusEntry[] = []
+
+  for (const line of lines) {
+    // ── branch headers ────────────────────────────────────────────────────
+    if (line.startsWith("# branch.oid ")) {
+      branch.oid = line.slice(13)
+    } else if (line.startsWith("# branch.head ")) {
+      branch.head = line.slice(14)
+    } else if (line.startsWith("# branch.upstream ")) {
+      branch.upstream = line.slice(18)
+    } else if (line.startsWith("# branch.ab ")) {
+      const m = /^\+(-?\d+) -(-?\d+)$/.exec(line.slice(12))
+      if (m) {
+        branch.ahead = parseInt(m[1], 10)
+        branch.behind = parseInt(m[2], 10)
+      }
+    }
+    // ── ordinary changed entry ────────────────────────────────────────────
+    // 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+    else if (line.startsWith("1 ")) {
+      const parts = line.split(" ")
+      const xy = parts[1] ?? ""
+      const path = parts.slice(8).join(" ")
+      entries.push({ type: "ordinary", indexStatus: xy[0] ?? " ", worktreeStatus: xy[1] ?? " ", path }) // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+    }
+    // ── renamed / copied entry ────────────────────────────────────────────
+    // 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>\t<origPath>
+    else if (line.startsWith("2 ")) {
+      const parts = line.split(" ")
+      const xy = parts[1] ?? ""
+      const scoreField = parts[8] ?? ""
+      const score = parseInt(scoreField.slice(1), 10)
+      const pathField = parts.slice(9).join(" ")
+      const tabIdx = pathField.indexOf("\t")
+      const path = tabIdx === -1 ? pathField : pathField.slice(0, tabIdx)
+      const origPath = tabIdx === -1 ? "" : pathField.slice(tabIdx + 1)
+      entries.push({ type: "renamed", indexStatus: xy[0] ?? " ", worktreeStatus: xy[1] ?? " ", path, origPath, score }) // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+    }
+    // ── unmerged entry ────────────────────────────────────────────────────
+    // u <xy> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+    else if (line.startsWith("u ")) {
+      const parts = line.split(" ")
+      const xy = parts[1] ?? ""
+      const path = parts.slice(10).join(" ")
+      entries.push({ type: "unmerged", indexStatus: xy[0] ?? " ", worktreeStatus: xy[1] ?? " ", path }) // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+    }
+    // ── untracked ─────────────────────────────────────────────────────────
+    else if (line.startsWith("? ")) {
+      entries.push({ type: "untracked", path: line.slice(2) })
+    }
+  }
+
+  const staged = entries.filter(
+    (e) => e.type !== "untracked" && e.type !== "unmerged" && e.indexStatus !== " " && e.indexStatus !== ".",
+  ).length
+  const unstaged = entries.filter(
+    (e) => e.type !== "untracked" && e.type !== "unmerged" && e.worktreeStatus !== " " && e.worktreeStatus !== ".",
+  ).length
+  const untracked = entries.filter((e) => e.type === "untracked").length
+  const unmerged = entries.filter((e) => e.type === "unmerged").length
+
+  return { branch, entries, stats: { staged, unstaged, untracked, unmerged } }
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  M: "modified",
+  A: "added",
+  D: "deleted",
+  R: "renamed",
+  C: "copied",
+  U: "unmerged",
+  "?": "untracked",
+}
+
+function statusLabel(ch: string): string {
+  return STATUS_LABELS[ch] ?? ch
+}
 
 /** Run a git sub-command, streaming stdout+stderr via onUpdate. */
 async function runGit(
@@ -109,6 +237,126 @@ function renderGitResult(
 
 export default function (pi: ExtensionAPI) {
   // ── git_add ────────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_status",
+    label: "git status",
+    description: [
+      "Show the working tree status (git status).",
+      "Returns parsed JSON — branch info, staged/unstaged/untracked entries, and summary stats.",
+      "Safe to call at any time to inspect repo state.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      paths: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Limit status to these paths (default: entire working tree).",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const args = ["status", "--porcelain=v2", "--branch"]
+      if (params.paths && params.paths.length > 0) args.push("--", ...params.paths)
+
+      const { lines, exitCode, spawnError } = await spawnStreaming("git", args, {
+        cwd: ctx.cwd,
+        signal,
+        notFoundHint: "Install git: https://git-scm.com",
+      })
+
+      if (spawnError) {
+        return {
+          content: [{ type: "text" as const, text: spawnError }],
+          details: { exitCode: -1 },
+          isError: true,
+        }
+      }
+
+      const status = parsePorcelainV2(lines)
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(status, null, 2) }],
+        details: { status, exitCode },
+        isError: exitCode !== 0,
+      }
+    },
+
+    renderCall(_args, theme) {
+      return new Text(theme.fg("toolTitle", theme.bold("git status")), 0, 0)
+    },
+
+    renderResult(result, { expanded }, theme) {
+      const details = result.details as { status?: GitStatus; exitCode: number | null }
+      const status = details.status
+
+      if (!status) {
+        const c = result.content[0]
+        const raw = c.type === "text" ? c.text : ""
+        return new Text(theme.fg("error", raw), 0, 0)
+      }
+
+      const { branch, entries, stats } = status
+      const lines: string[] = []
+
+      // branch line
+      let branchLine = theme.fg("toolTitle", "branch ") + theme.fg("accent", branch.head)
+      if (branch.upstream) {
+        branchLine += theme.fg("dim", " → ") + theme.fg("muted", branch.upstream)
+      }
+      if (branch.ahead !== undefined && branch.behind !== undefined) {
+        const parts: string[] = []
+        if (branch.ahead > 0) parts.push(theme.fg("success", `↑${branch.ahead}`))
+        if (branch.behind > 0) parts.push(theme.fg("warning", `↓${branch.behind}`))
+        if (parts.length > 0) branchLine += " " + parts.join(" ")
+      }
+      lines.push(branchLine)
+
+      if (entries.length === 0) {
+        lines.push(theme.fg("success", "✓ clean"))
+        return new Text(lines.join("\n"), 0, 0)
+      }
+
+      // summary badges
+      const badges: string[] = []
+      if (stats.staged > 0) badges.push(theme.fg("success", `${stats.staged} staged`))
+      if (stats.unstaged > 0) badges.push(theme.fg("warning", `${stats.unstaged} unstaged`))
+      if (stats.untracked > 0) badges.push(theme.fg("dim", `${stats.untracked} untracked`))
+      if (stats.unmerged > 0) badges.push(theme.fg("error", `${stats.unmerged} unmerged`))
+      if (badges.length > 0) lines.push(badges.join("  "))
+
+      if (!expanded) return new Text(lines.join("\n"), 0, 0)
+
+      // per-entry detail (expanded)
+      for (const entry of entries) {
+        if (entry.type === "untracked") {
+          lines.push(theme.fg("dim", "  ? ") + theme.fg("dim", entry.path))
+        } else if (entry.type === "unmerged") {
+          lines.push(theme.fg("error", "  U ") + entry.path)
+        } else if (entry.type === "renamed") {
+          const iLabel = statusLabel(entry.indexStatus)
+          const wLabel = entry.worktreeStatus !== " " ? "+" + statusLabel(entry.worktreeStatus) : ""
+          const label = [iLabel, wLabel].filter(Boolean).join("/")
+          lines.push(
+            theme.fg("success", "  R ") +
+              theme.fg("accent", entry.origPath) +
+              theme.fg("dim", " → ") +
+              theme.fg("accent", entry.path) +
+              theme.fg("muted", ` (${label})`),
+          )
+        } else {
+          const iCh = entry.indexStatus !== " " ? entry.indexStatus : ""
+          const wCh = entry.worktreeStatus !== " " ? entry.worktreeStatus : ""
+          const iColor = iCh ? "success" : "dim"
+          const wColor = wCh ? "warning" : "dim"
+          const indicator = theme.fg(iColor, iCh || " ") + theme.fg(wColor, wCh || " ")
+          lines.push("  " + indicator + " " + theme.fg("dim", entry.path))
+        }
+      }
+
+      return new Text(lines.join("\n"), 0, 0)
+    },
+  })
 
   pi.registerTool({
     name: "git_add",
