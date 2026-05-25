@@ -215,6 +215,14 @@ export default function (pi: ExtensionAPI) {
     // ── execute ──────────────────────────────────────────────────────────────
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      if (!Array.isArray(params.cmd)) {
+        return {
+          content: [{ type: "text" as const, text: 'cmd must be an array of strings, e.g. ["pnpm", "run", "build"]' }],
+          details: { cmd: [], cwd: ctx.cwd, exitCode: -1, totalLines: 0 },
+          isError: true,
+        }
+      }
+
       const permissions = resolvePermissions(loadConfig(ctx.cwd))
       const verdict = check(params.cmd, permissions)
 
