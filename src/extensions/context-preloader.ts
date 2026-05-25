@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { dirname, join, relative, resolve } from "node:path"
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui"
 
 const MAX_DEPTH = 5
 const LOG_FILE = join(homedir(), ".pi", "context-preloader.log")
@@ -185,7 +186,37 @@ export default function (pi: ExtensionAPI): void {
         treeLines.push(root.label)
         treeLines.push(...renderTree(root.children, cwd))
       }
-      ctx.ui.notify(`[Preloaded @refs]\n${treeLines.join("\n")}`, "info")
+
+      let expanded = false
+
+      void ctx.ui.custom<undefined>((tui, theme, _kb, done) => {
+        const summary = (hint: string) =>
+          theme.fg("accent", `📎 ${totalLoaded} context file${totalLoaded !== 1 ? "s" : ""} preloaded`) +
+          theme.fg("dim", `  ${hint}`)
+
+        return {
+          render(width: number): string[] {
+            if (!expanded) {
+              return [truncateToWidth(summary("ctrl+o to expand"), width)]
+            }
+            const lines = [
+              truncateToWidth(summary("ctrl+o to collapse"), width),
+              ...treeLines.map((l) => truncateToWidth(theme.fg("dim", l), width)),
+            ]
+            return lines
+          },
+          // eslint-disable-next-line @typescript-eslint/no-empty-function
+          invalidate() {},
+          handleInput(data: string) {
+            if (matchesKey(data, Key.ctrl("o"))) {
+              expanded = !expanded
+              tui.requestRender()
+            } else {
+              done(undefined)
+            }
+          },
+        }
+      })
     }, 0)
   })
 

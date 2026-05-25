@@ -33,7 +33,9 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "check": "pnpm typecheck && pnpm format && pnpm lint"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm typecheck && pnpm format && pnpm lint && pnpm test"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -43,13 +45,15 @@
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
+    "@types/minimist": "^1.2.5",
     "@types/node": "^22",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-simple-import-sort": "^12.0.0",
+    "prettier": "^3.0.0",
     "typebox": "^1.1.38",
     "typescript": "5.9.3",
-    "eslint": "^9.0.0",
     "typescript-eslint": "^8.0.0",
-    "eslint-plugin-simple-import-sort": "^12.0.0",
-    "eslint-config-prettier": "^9.0.0",
-    "prettier": "^3.0.0"
+    "vitest": "^4.1.7"
   }
 }

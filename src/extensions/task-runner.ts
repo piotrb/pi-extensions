@@ -12,28 +12,55 @@
  *
  * Config schema:
  * {
- *   "allowedCommands": [["pnpm"], ["pnpm", "run"], ["my-script"]],
- *   "replaceDefaults": false   // if true, discard built-in defaults
+ *   "allowedCommands": [
+ *     "pnpm run *",        // any pnpm run subcommand  (trailing-space wildcard)
+ *     "pnpm:*",           // same — :* suffix is equivalent to trailing ' *'
+ *     "npm run build",    // exact match, no wildcard
+ *     "git * --dry-run",  // * anywhere, spans multiple words
+ *     "* --version"       // any command ending with --version
+ *   ],
+ *   "deniedCommands": [
+ *     "pnpm run deploy *" // deny takes precedence over allow
+ *   ],
+ *   "replaceDefaults": false  // if true, discard built-in defaults for allowedCommands
  * }
  *
- * Allowed command matching: cmd matches a pattern when the pattern is a
- * prefix of cmd.  ["pnpm"] allows any pnpm subcommand; ["pnpm","run"] only
- * allows `pnpm run …`.
+ * Pattern syntax (mirrors Claude Code's Bash permission syntax):
+ *   No wildcard    — exact match against the joined command string
+ *   Trailing ' *'  — prefix match with word boundary (space or end-of-string)
+ *   Trailing ':*'  — identical to trailing ' *'
+ *   '*' elsewhere  — glob-style: * matches any sequence of chars including spaces
+ *   Standalone '*' — matches everything
+ *
+ * Evaluation order: deny → allow → blocked. Deny rules always win.
  */
 
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join, resolve as resolvePath } from "node:path"
+import { dirname, join, resolve as resolvePath } from "node:path"
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { Text } from "@earendil-works/pi-tui"
+import minimist from "minimist"
 import { Type } from "typebox"
 
 import { spawnStreaming } from "../lib/extension-utils.ts"
+import { check, type PermissionSet } from "../lib/permissions.ts"
 
 // ─── defaults ────────────────────────────────────────────────────────────────
 
-const DEFAULT_ALLOWED: string[][] = [["pnpm", "run"], ["npm", "run"], ["bun", "run"], ["task"]]
+const DEFAULT_ALLOWED: string[] = [
+  "pnpm run *",
+  "pnpm add *",
+  "pnpm remove *",
+  "npm run *",
+  "npm add *",
+  "npm remove *",
+  "bun run *",
+  "bun add *",
+  "bun remove *",
+  "task *",
+]
 
 const DEFAULT_VISIBLE_LINES = 20
 
@@ -50,14 +77,17 @@ const DEFAULT_VISIBLE_LINES = 20
 //
 // Schema:
 // {
-//   // Each entry is an array representing a command prefix.
-//   // A cmd matches when the entry is a leading slice of cmd.
-//   // ["pnpm"]         → allows any:  pnpm install, pnpm run build, …
-//   // ["pnpm", "run"]  → allows only: pnpm run <anything>
+//   // Each entry is a pattern string using Claude Code's Bash permission syntax.
+//   // "pnpm run *"  → any pnpm run subcommand (trailing ' *' = prefix + word boundary)
+//   // "pnpm:*"      → identical to "pnpm *" (':*' suffix is shorthand)
+//   // "npm run build" → exact match
+//   // "git * --dry-run" → * spans multiple words
 //   "allowedCommands": [
-//     ["pnpm"],
-//     ["pnpm", "run"],
-//     ["my-script"]
+//     "pnpm run *",
+//     "my-script *"
+//   ],
+//   "deniedCommands": [
+//     "pnpm run deploy *"  // deny takes precedence over allow
 //   ],
 //
 //   // Set to true in any file to discard the built-in defaults
@@ -67,7 +97,8 @@ const DEFAULT_VISIBLE_LINES = 20
 // }
 
 interface TaskRunnerConfig {
-  allowedCommands?: string[][]
+  allowedCommands?: string[]
+  deniedCommands?: string[]
   replaceDefaults?: boolean
 }
 
@@ -78,7 +109,8 @@ function loadConfig(cwd: string): TaskRunnerConfig {
     join(cwd, ".pi", "task-runner.json"),
   ]
 
-  let allowedCommands: string[][] = []
+  let allowedCommands: string[] = []
+  let deniedCommands: string[] = []
   let replaceDefaults = false
 
   for (const p of paths) {
@@ -89,17 +121,23 @@ function loadConfig(cwd: string): TaskRunnerConfig {
       if (Array.isArray(raw.allowedCommands)) {
         allowedCommands = [...allowedCommands, ...raw.allowedCommands]
       }
+      if (Array.isArray(raw.deniedCommands)) {
+        deniedCommands = [...deniedCommands, ...raw.deniedCommands]
+      }
     } catch {
       // ignore malformed config
     }
   }
 
-  return { allowedCommands, replaceDefaults }
+  return { allowedCommands, deniedCommands, replaceDefaults }
 }
 
-function resolveAllowed(config: TaskRunnerConfig): string[][] {
-  const extra = config.allowedCommands ?? []
-  return config.replaceDefaults ? extra : [...DEFAULT_ALLOWED, ...extra]
+function resolvePermissions(config: TaskRunnerConfig): PermissionSet {
+  const allow = config.replaceDefaults
+    ? (config.allowedCommands ?? [])
+    : [...DEFAULT_ALLOWED, ...(config.allowedCommands ?? [])]
+  const deny = config.deniedCommands ?? []
+  return { allow, deny }
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -116,15 +154,6 @@ function formatCmd(cmd: string[]): string {
   return cmd.map(shellQuote).join(" ")
 }
 
-function matchesPattern(cmd: string[], pattern: string[]): boolean {
-  if (cmd.length < pattern.length) return false
-  return pattern.every((part, i) => cmd[i] === part)
-}
-
-function isAllowed(cmd: string[], allowed: string[][]): boolean {
-  return allowed.some((pattern) => matchesPattern(cmd, pattern))
-}
-
 // ─── tool details type ───────────────────────────────────────────────────────
 
 interface RunDetails {
@@ -139,13 +168,13 @@ interface RunDetails {
 
 function buildDescription(cwd: string): string {
   const config = loadConfig(cwd)
-  const allowed = resolveAllowed(config)
-  // Unique by first element, preserving order
+  const { allow } = resolvePermissions(config)
+  // Unique by leading word, preserving order
   const seen = new Set<string>()
   const launchers: string[] = []
-  for (const pattern of allowed) {
-    const key = pattern[0]
-    if (!seen.has(key)) {
+  for (const pattern of allow) {
+    const key = pattern.split(/[ :*]/)[0] ?? pattern
+    if (key && !seen.has(key)) {
       seen.add(key)
       launchers.push(key)
     }
@@ -186,25 +215,28 @@ export default function (pi: ExtensionAPI) {
     // ── execute ──────────────────────────────────────────────────────────────
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const config = loadConfig(ctx.cwd)
-      const allowed = resolveAllowed(config)
+      const permissions = resolvePermissions(loadConfig(ctx.cwd))
+      const verdict = check(params.cmd, permissions)
 
-      // ── allowlist check ────────────────────────────────────────────────────
-      if (!isAllowed(params.cmd, allowed)) {
-        const patternList = allowed.map((p) => `  • ${formatCmd(p)}`).join("\n")
+      // ── permission check ────────────────────────────────────────────────────
+      if (verdict !== "allow") {
+        const isDenied = verdict === "deny"
+        const errorLines = isDenied
+          ? [
+              `Command denied: ${formatCmd(params.cmd)}`,
+              "",
+              "Denied patterns:",
+              ...permissions.deny.map((p) => `  • ${p}`),
+            ]
+          : [
+              `Command not allowed: ${formatCmd(params.cmd)}`,
+              "",
+              "Allowed patterns:",
+              ...permissions.allow.map((p) => `  • ${p}`),
+            ]
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: [`Command not allowed: ${formatCmd(params.cmd)}`, "", "Allowed patterns:", patternList].join("\n"),
-            },
-          ],
-          details: {
-            cmd: params.cmd,
-            cwd: ctx.cwd,
-            exitCode: -1,
-            totalLines: 0,
-          },
+          content: [{ type: "text" as const, text: errorLines.join("\n") }],
+          details: { cmd: params.cmd, cwd: ctx.cwd, exitCode: -1, totalLines: 0 },
           isError: true,
         }
       }
@@ -316,6 +348,109 @@ export default function (pi: ExtensionAPI) {
       }
 
       return new Text(text, 0, 0)
+    },
+  })
+
+  // ── /task-permission ───────────────────────────────────────────────────────────
+
+  pi.registerCommand("task-permission", {
+    description:
+      "Add or remove an allow/deny pattern in task-runner config. " +
+      "Usage: /task-permission [allow|deny] [--user] [--remove] <pattern>  " +
+      "--user writes to ~/.pi/task-runner.json (default: <cwd>/.pi/task-runner.json)  " +
+      "--remove removes the pattern instead of adding it",
+
+    getArgumentCompletions(prefix) {
+      const tokens = prefix.trimStart().split(/\s+/)
+      const first = tokens[0] ?? ""
+      const second = tokens[1] ?? ""
+
+      // First token: suggest allow / deny
+      if (tokens.length <= 1) {
+        return ["allow", "deny"].filter((t) => t.startsWith(first)).map((value) => ({ value, label: value }))
+      }
+
+      // Second token: suggest flags (if not already present)
+      if (tokens.length === 2) {
+        const flags = [
+          { value: "--user", description: "Write to user-global config (~/.pi/task-runner.json)" },
+          { value: "--remove", description: "Remove the pattern instead of adding it" },
+        ]
+        const suggestions = flags
+          .filter((f) => !tokens.includes(f.value) && f.value.startsWith(second))
+          .map((f) => ({ value: f.value, label: f.value, description: f.description }))
+        if (suggestions.length > 0) return suggestions
+      }
+
+      return null
+    },
+
+    // eslint-disable-next-line @typescript-eslint/require-await
+    async handler(args, ctx) {
+      // Parse: [allow|deny] [--user] <pattern...>
+      const parsed = minimist(args.trim().split(/\s+/).filter(Boolean), {
+        boolean: ["user", "remove"],
+        default: { user: false, remove: false },
+      })
+
+      const list = parsed._[0] as string | undefined
+      const pattern = parsed._.slice(1).join(" ")
+
+      if (list !== "allow" && list !== "deny") {
+        ctx.ui.notify(
+          "Usage: /task-permission [allow|deny] [--user] [--remove] <pattern>\n" +
+            "  allow     Add to / remove from allowedCommands\n" +
+            "  deny      Add to / remove from deniedCommands\n" +
+            "  --user    Write to ~/.pi/task-runner.json instead of <cwd>/.pi/task-runner.json\n" +
+            "  --remove  Remove the pattern instead of adding it",
+          "info",
+        )
+        return
+      }
+
+      if (!pattern) {
+        ctx.ui.notify("Error: no pattern specified.", "error")
+        return
+      }
+
+      const configPath = parsed.user
+        ? join(homedir(), ".pi", "task-runner.json")
+        : join(ctx.cwd, ".pi", "task-runner.json")
+
+      // Read existing config or start fresh
+      let config: TaskRunnerConfig = {}
+      if (existsSync(configPath)) {
+        try {
+          config = JSON.parse(readFileSync(configPath, "utf-8")) as TaskRunnerConfig
+        } catch {
+          ctx.ui.notify(`Error: could not parse ${configPath}`, "error")
+          return
+        }
+      }
+
+      const key = list === "allow" ? "allowedCommands" : "deniedCommands"
+      const existing = config[key] ?? []
+      const scope = parsed.user ? "user" : "project"
+
+      if (parsed.remove) {
+        if (!existing.includes(pattern)) {
+          ctx.ui.notify(`Pattern not found in ${key}: ${pattern}`, "info")
+          return
+        }
+        config[key] = existing.filter((p) => p !== pattern)
+        mkdirSync(dirname(configPath), { recursive: true })
+        writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8")
+        ctx.ui.notify(`Removed from ${key} (${scope}):\n  ${pattern}`, "info")
+      } else {
+        if (existing.includes(pattern)) {
+          ctx.ui.notify(`Pattern already present in ${key}: ${pattern}`, "info")
+          return
+        }
+        config[key] = [...existing, pattern]
+        mkdirSync(dirname(configPath), { recursive: true })
+        writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8")
+        ctx.ui.notify(`Added to ${key} (${scope}):\n  ${pattern}`, "info")
+      }
     },
   })
 }

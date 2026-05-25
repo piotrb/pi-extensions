@@ -5,7 +5,7 @@
  *   import { spawnStreaming } from "../lib/extension-utils.ts";
  */
 
-import { spawn } from "node:child_process"
+import { type ChildProcess, spawn } from "node:child_process"
 
 // ─── spawnStreaming ───────────────────────────────────────────────────────────
 
@@ -27,6 +27,12 @@ export interface SpawnStreamingOptions {
    */
   notFoundHint?: string
   /**
+   * Maximum time (ms) to wait before killing the child process and resolving
+   * with a timeout error. Defaults to 30 000 ms (30 s). Pass Infinity to
+   * disable.
+   */
+  timeoutMs?: number
+  /**
    * Called each time one or more complete lines are flushed from the output
    * buffer — i.e. on every chunk that contains at least one newline.
    *
@@ -39,6 +45,70 @@ export interface SpawnStreamingOptions {
   onLines?: (lines: string[]) => void
 }
 
+// ─── progressiveKill ───────────────────────────────────────────────────────────────
+
+/**
+ * Send SIGINT to `child`, then SIGTERM after `termDelayMs`, then SIGKILL after
+ * another `killDelayMs`. Timers are cleared as soon as the process exits.
+ *
+ * Returns a cleanup function that cancels any pending timers (safe to call
+ * after the process has already exited).
+ */
+export function progressiveKill(child: ChildProcess, termDelayMs = 5_000, killDelayMs = 5_000): () => void {
+  child.kill("SIGINT")
+
+  const termTimer = setTimeout(() => {
+    child.kill("SIGTERM")
+  }, termDelayMs)
+
+  const killTimer = setTimeout(() => {
+    child.kill("SIGKILL")
+  }, termDelayMs + killDelayMs)
+
+  const cleanup = () => {
+    clearTimeout(termTimer)
+    clearTimeout(killTimer)
+  }
+
+  child.once("exit", cleanup)
+
+  return cleanup
+}
+
+// ─── scheduleProcessTimeout ─────────────────────────────────────────────────────────
+
+/**
+ * Schedule a timeout for a child process. After `ms` milliseconds:
+ *   1. Triggers a progressive kill on the child (SIGINT → SIGTERM → SIGKILL).
+ *   2. Calls `onTimeout` so the caller can resolve/reject.
+ *
+ * The timer is automatically cancelled if the process exits before the timeout,
+ * so callers do not need to call the returned cancel function in their close/error
+ * handlers. Pass `Infinity` to skip scheduling entirely.
+ *
+ * Returns a cancel function (useful for early cancellation in other paths).
+ */
+export function scheduleProcessTimeout(ms: number, child: ChildProcess, onTimeout: () => void): () => void {
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  if (ms === Infinity) return () => {}
+
+  const cancel = () => {
+    clearTimeout(timer)
+  }
+
+  const timer = setTimeout(() => {
+    child.removeListener("exit", cancel)
+    progressiveKill(child)
+    onTimeout()
+  }, ms)
+
+  child.once("exit", cancel)
+
+  return cancel
+}
+
+// ─── spawnStreaming ───────────────────────────────────────────────────────────────
+
 /**
  * Spawn a subprocess, stream stdout+stderr as accumulated lines, and resolve
  * with the full output once the process exits.
@@ -46,15 +116,17 @@ export interface SpawnStreamingOptions {
  * - stdout and stderr are merged into a single ordered stream (same as 2>&1).
  * - Lines are split on `\n`; a trailing incomplete line is held in a buffer
  *   and flushed when the process closes.
- * - The abort signal sends SIGTERM to the child.
+ * - The abort signal triggers progressive kill (SIGINT → SIGTERM → SIGKILL).
+ * - Timeout triggers the same progressive kill sequence.
  * - ENOENT is converted to a friendly error using `notFoundHint`.
  */
 export function spawnStreaming(bin: string, args: string[], options: SpawnStreamingOptions): Promise<SpawnResult> {
-  const { cwd, signal, env, notFoundHint, onLines } = options
+  const { cwd, signal, env, notFoundHint, onLines, timeoutMs = 30_000 } = options
 
   return new Promise<SpawnResult>((resolve) => {
     const outputLines: string[] = []
     let pending = "" // incomplete last line, not yet newline-terminated
+    let settled = false
 
     const child = spawn(bin, args, {
       cwd,
@@ -62,7 +134,17 @@ export function spawnStreaming(bin: string, args: string[], options: SpawnStream
       env: env ? { ...process.env, ...env } : process.env,
     })
 
-    signal?.addEventListener("abort", () => child.kill("SIGTERM"))
+    signal?.addEventListener("abort", () => progressiveKill(child))
+
+    scheduleProcessTimeout(timeoutMs, child, () => {
+      if (settled) return
+      settled = true
+      resolve({
+        lines: outputLines,
+        exitCode: null,
+        spawnError: `${bin}: timed out after ${timeoutMs / 1000}s`,
+      })
+    })
 
     const handleChunk = (chunk: Buffer) => {
       pending += chunk.toString()
@@ -77,12 +159,16 @@ export function spawnStreaming(bin: string, args: string[], options: SpawnStream
     child.stderr.on("data", handleChunk)
 
     child.on("close", (exitCode) => {
+      if (settled) return
+      settled = true
       // Flush any remaining partial line
       if (pending) outputLines.push(pending)
       resolve({ lines: outputLines, exitCode })
     })
 
     child.on("error", (err) => {
+      if (settled) return
+      settled = true
       const isEnoent = (err as NodeJS.ErrnoException).code === "ENOENT"
       const spawnError = isEnoent
         ? notFoundHint

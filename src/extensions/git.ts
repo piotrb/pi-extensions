@@ -2,11 +2,13 @@
  * git — structured tools for common git staging and commit operations.
  *
  * Exposes four tools:
- *   git_status — show working tree status (parsed porcelain v2 → JSON)
- *   git_add    — stage files (git add)
- *   git_rm     — remove files from index / working tree (git rm)
- *   git_mv     — move or rename files (git mv)
- *   git_commit — record a commit (git commit)
+ *   git_status   — show working tree status (parsed porcelain v2 → JSON)
+ *   git_add      — stage files (git add)
+ *   git_rm       — remove files from index / working tree (git rm)
+ *   git_mv       — move or rename files (git mv)
+ *   git_diff     — show changes between commits, index, and working tree (git diff)
+ *   git_restore  — restore working tree files or unstage changes (git restore)
+ *   git_commit   — record a commit (git commit)
  *
  * Each tool runs the real git binary, streams output, and renders a compact
  * summary in the TUI.  Destructive flags (--force on add/rm, --amend on
@@ -233,9 +235,36 @@ function renderGitResult(
   return new Text(text, 0, 0)
 }
 
+// ─── system prompt ──────────────────────────────────────────────────────────
+
+const GIT_LEARNING_MODE_PROMPT = `
+## Git tools — learning mode
+
+You have access to a limited set of structured git tools: git_status, git_add,
+git_rm, git_mv, git_diff, git_restore, and git_commit.
+
+If you find yourself needing a git operation that is NOT covered by these tools
+(e.g. git rebase, git stash, git log, git diff, git push, git pull, git cherry-pick,
+or any option/flag not exposed as a parameter), do NOT attempt a workaround or
+skip the operation silently.
+skip the operation silently.
+
+Instead, stop immediately and respond with a message in this format:
+
+  ❌ Git learning-mode gap detected
+  Missing: <the exact git command or option you need>
+  Reason: <brief explanation of what you were trying to do>
+
+This is intentional — the gap will be used to extend the toolset.
+`.trim()
+
 // ─── extension ───────────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+  pi.on("before_agent_start", (event: { systemPrompt: string }) => {
+    return { systemPrompt: `${event.systemPrompt}\n\n${GIT_LEARNING_MODE_PROMPT}` }
+  })
+
   // ── git_add ────────────────────────────────────────────────────────────────
 
   pi.registerTool({
@@ -363,7 +392,8 @@ export default function (pi: ExtensionAPI) {
     label: "git add",
     description: [
       "Stage specific files or directories for the next commit (git add).",
-      "Only use when the user explicitly asks to stage or commit files.",
+      "Only use when the user explicitly asks to stage or commit files — do not stage proactively after edits.",
+      "Always confirm with git_status first to understand what will be staged.",
       "Provide explicit paths — do not stage blindly.",
       "Use trackedOnly=true to stage modifications and deletions across all tracked files without listing them individually.",
     ].join(" "),
@@ -548,6 +578,188 @@ export default function (pi: ExtensionAPI) {
 
     renderResult(result, { expanded, isPartial }, theme) {
       return renderGitResult(result, expanded, isPartial, theme, "moving…")
+    },
+  })
+
+  // ── git_diff ───────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_diff",
+    label: "git diff",
+    description: [
+      "Show changes between commits, the index, and the working tree (git diff).",
+      "Default (no flags): unstaged changes in the working tree vs the index.",
+      "Use staged=true to show staged changes (index vs HEAD).",
+      "Use base and target to compare two commits/branches.",
+      "Use paths to limit the diff to specific files or directories.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      staged: Type.Optional(
+        Type.Boolean({
+          description: "Show staged changes (index vs HEAD). Equivalent to git diff --staged.",
+        }),
+      ),
+      base: Type.Optional(
+        Type.String({
+          description:
+            "Compare from this commit, branch, or tag. " +
+            "When only base is given, diffs base against the working tree. " +
+            "Combine with target to compare two refs (e.g. base='main', target='HEAD').",
+        }),
+      ),
+      target: Type.Optional(
+        Type.String({
+          description: "Compare to this commit, branch, or tag. Requires base to also be set.",
+        }),
+      ),
+      paths: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Limit the diff to these files or directories.",
+        }),
+      ),
+      unified: Type.Optional(
+        Type.Number({
+          description: "Number of context lines around each hunk (default: 3). Equivalent to -U<n>.",
+        }),
+      ),
+      nameOnly: Type.Optional(
+        Type.Boolean({
+          description: "Show only file names that changed, not the full diff.",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["diff"]
+      if (params.staged) args.push("--staged")
+      if (params.nameOnly) args.push("--name-only")
+      if (params.unified !== undefined) args.push(`-U${params.unified}`)
+      if (params.base) {
+        args.push(params.base)
+        if (params.target) args.push(params.target)
+      }
+      if (params.paths && params.paths.length > 0) args.push("--", ...params.paths)
+      return runGit(args, ctx.cwd, signal, onUpdate)
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.staged) flags.push("--staged")
+      if (args.nameOnly) flags.push("--name-only")
+      if (args.unified !== undefined) flags.push(`-U${args.unified}`)
+
+      let text = theme.fg("toolTitle", theme.bold("git diff"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+      if (args.base) {
+        text += theme.fg("accent", " " + args.base)
+        if (args.target) text += theme.fg("dim", "...") + theme.fg("accent", args.target)
+      }
+      if (args.paths && args.paths.length > 0)
+        text += theme.fg("dim", " -- ") + theme.fg("accent", args.paths.join(" "))
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) return renderGitResult(result, expanded, isPartial, theme, "diffing…")
+
+      const details = result.details as GitDetails | undefined
+      const content = result.content[0]
+      const raw = content.type === "text" ? (content as { type: string; text: string }).text : ""
+      const lines = raw.length > 0 ? raw.split("\n") : []
+      const failed = details?.exitCode !== 0 && details?.exitCode != null
+
+      if (failed) return renderGitResult(result, expanded, isPartial, theme)
+
+      if (lines.length === 0) return new Text(theme.fg("success", "✓ no differences"), 0, 0)
+
+      const visibleLines = expanded ? lines.length : 20
+      const visible = lines.slice(0, visibleLines)
+      const hidden = lines.length - visible.length
+
+      const styled = visible.map((l) => {
+        if (l.startsWith("+") && !l.startsWith("+++")) return theme.fg("toolDiffAdded", l)
+        if (l.startsWith("-") && !l.startsWith("---")) return theme.fg("toolDiffRemoved", l)
+        if (l.startsWith("@@")) return theme.fg("accent", l)
+        if (l.startsWith("diff ") || l.startsWith("index ") || l.startsWith("--- ") || l.startsWith("+++ "))
+          return theme.fg("muted", l)
+        return theme.fg("toolDiffContext", l)
+      })
+
+      let text = styled.join("\n")
+      if (hidden > 0)
+        text += "\n" + theme.fg("muted", `  (${hidden} more line${hidden !== 1 ? "s" : ""},  ctrl+o to expand)`)
+      return new Text(text, 0, 0)
+    },
+  })
+
+  // ── git_restore ────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_restore",
+    label: "git restore",
+    description: [
+      "Restore working tree files or unstage changes (git restore).",
+      "Only use when the user explicitly asks to discard changes or unstage files —",
+      "this is a destructive operation that can permanently lose uncommitted work.",
+      "Use staged=true to unstage files (remove from index, keep on disk).",
+      "Use source to restore content from a specific commit/branch (e.g. 'HEAD').",
+      "Use worktree=true (default when staged is not set) to restore working tree files.",
+      "Combine staged=true and worktree=true to unstage AND discard working tree changes.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      paths: Type.Array(Type.String(), {
+        description: "Files to restore. At least one path is required.",
+        minItems: 1,
+      }),
+      staged: Type.Optional(
+        Type.Boolean({
+          description:
+            "Unstage the files — restore the index from HEAD (or from source if given). " +
+            "Equivalent to git restore --staged.",
+        }),
+      ),
+      worktree: Type.Optional(
+        Type.Boolean({
+          description:
+            "Restore the working tree files (default behaviour when staged is not set). " +
+            "Pass true together with staged=true to unstage AND discard working tree changes.",
+        }),
+      ),
+      source: Type.Optional(
+        Type.String({
+          description:
+            "Restore content from this tree-ish (commit SHA, branch, tag, 'HEAD', etc.). " +
+            "Defaults to HEAD when --staged is used, or the index when only restoring the worktree.",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["restore"]
+      if (params.staged) args.push("--staged")
+      if (params.worktree) args.push("--worktree")
+      if (params.source) args.push("--source", params.source)
+      args.push("--", ...params.paths)
+      return runGit(args, ctx.cwd, signal, onUpdate)
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.staged) flags.push("--staged")
+      if (args.worktree) flags.push("--worktree")
+      if (args.source) flags.push(`--source=${args.source}`)
+
+      const paths = Array.isArray(args.paths) ? args.paths : [args.paths]
+      let text = theme.fg("toolTitle", theme.bold("git restore"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+      text += theme.fg("accent", " " + paths.join(" "))
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      return renderGitResult(result, expanded, isPartial, theme, "restoring…")
     },
   })
 
