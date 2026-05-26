@@ -131,6 +131,7 @@ export function spawnStreaming(bin: string, args: string[], options: SpawnStream
     const child = spawn(bin, args, {
       cwd,
       shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
       env: env ? { ...process.env, ...env } : process.env,
     })
 
