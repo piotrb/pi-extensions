@@ -3,7 +3,6 @@ import { homedir } from "node:os"
 import { dirname, join, relative, resolve } from "node:path"
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui"
 
 const MAX_DEPTH = 5
 const LOG_FILE = join(homedir(), ".pi", "context-preloader.log")
@@ -137,6 +136,8 @@ function findAgentsMd(cwd: string): string[] {
 export default function (pi: ExtensionAPI): void {
   let cachedSections: { path: string; content: string }[] | null = null
   let injectedThisSession = false
+  let cachedTreeLines: string[] = []
+  let cachedTotal = 0
 
   pi.on("session_start", () => {
     cachedSections = null
@@ -177,60 +178,35 @@ export default function (pi: ExtensionAPI): void {
 
     log(`pre-scanned ${totalLoaded} file(s) on ${event.reason}`)
 
-    // Defer until after Pi's reload sequence calls rebuildChatFromMessages() +
-    // showLoadedResources(), which would otherwise wipe anything we add now.
+    cachedTreeLines = []
+    for (const root of roots) {
+      if (root.children.length === 0) continue
+      cachedTreeLines.push(root.label)
+      cachedTreeLines.push(...renderTree(root.children, cwd))
+    }
+    cachedTotal = totalLoaded
+
+    // Defer past pi's own startup/reload display so the notify appears after
+    // the [Context]/[Skills]/[Extensions] lines rather than before them.
     setTimeout(() => {
-      const treeLines: string[] = []
-      for (const root of roots) {
-        if (root.children.length === 0) continue
-        treeLines.push(root.label)
-        treeLines.push(...renderTree(root.children, cwd))
-      }
-
-      let expanded = false
-
-      void ctx.ui.custom<undefined>((tui, theme, _kb, done) => {
-        const summary = (hint: string) =>
-          theme.fg("accent", `📎 ${totalLoaded} context file${totalLoaded !== 1 ? "s" : ""} preloaded`) +
-          theme.fg("dim", `  ${hint}`)
-
-        return {
-          render(width: number): string[] {
-            if (!expanded) {
-              return [truncateToWidth(summary("ctrl+o to expand"), width)]
-            }
-            const lines = [
-              truncateToWidth(summary("ctrl+o to collapse"), width),
-              ...treeLines.map((l) => truncateToWidth(theme.fg("dim", l), width)),
-            ]
-            return lines
-          },
-          // eslint-disable-next-line @typescript-eslint/no-empty-function
-          invalidate() {},
-          handleInput(data: string) {
-            if (matchesKey(data, Key.ctrl("o"))) {
-              expanded = !expanded
-              tui.requestRender()
-            } else {
-              done(undefined)
-            }
-          },
-        }
-      })
+      ctx.ui.notify(
+        `📎 ${totalLoaded} context file${totalLoaded !== 1 ? "s" : ""} preloaded  (/context-preload for tree)`,
+        "info",
+      )
     }, 0)
   })
 
-  // Shows the dependency tree on demand.
-  pi.registerCommand("preloaded", {
+  // Shows the full dependency tree on demand.
+  pi.registerCommand("context-preload", {
     description: "Show dependency tree of files preloaded from @refs in AGENTS.md",
     // eslint-disable-next-line @typescript-eslint/require-await
     handler: async (_args, ctx) => {
-      if (!cachedSections || cachedSections.length === 0) {
+      if (cachedTotal === 0) {
         ctx.ui.notify("context-preloader: no @refs loaded", "info")
         return
       }
-      const lines = cachedSections.map((s) => `  ${s.path}`).join("\n")
-      ctx.ui.notify(`[Preloaded @refs] (${cachedSections.length} files)\n${lines}`, "info")
+      const body = cachedTreeLines.join("\n")
+      ctx.ui.notify(`📎 ${cachedTotal} context file${cachedTotal !== 1 ? "s" : ""} preloaded\n${body}`, "info")
     },
   })
 

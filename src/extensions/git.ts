@@ -9,6 +9,7 @@
  *   git_diff     — show changes between commits, index, and working tree (git diff)
  *   git_restore  — restore working tree files or unstage changes (git restore)
  *   git_commit   — record a commit (git commit)
+ *   git_log      — show commit history (git log)
  *
  * Each tool runs the real git binary, streams output, and renders a compact
  * summary in the TUI.  Destructive flags (--force on add/rm, --amend on
@@ -241,10 +242,10 @@ const GIT_LEARNING_MODE_PROMPT = `
 ## Git tools — learning mode
 
 You have access to a limited set of structured git tools: git_status, git_add,
-git_rm, git_mv, git_diff, git_restore, and git_commit.
+git_rm, git_mv, git_diff, git_restore, git_commit, and git_log.
 
 If you find yourself needing a git operation that is NOT covered by these tools
-(e.g. git rebase, git stash, git log, git diff, git push, git pull, git cherry-pick,
+(e.g. git rebase, git stash, git push, git pull, git cherry-pick,
 or any option/flag not exposed as a parameter), do NOT attempt a workaround or
 skip the operation silently.
 skip the operation silently.
@@ -760,6 +761,160 @@ export default function (pi: ExtensionAPI) {
 
     renderResult(result, { expanded, isPartial }, theme) {
       return renderGitResult(result, expanded, isPartial, theme, "restoring…")
+    },
+  })
+
+  // ── git_log ──────────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_log",
+    label: "git log",
+    description: [
+      "Show commit history (git log).",
+      "Use maxCount to limit output. Use oneline=true for compact one-commit-per-line output.",
+      "Use graph=true to show a branch/merge graph alongside log entries.",
+      "Use range (e.g. 'main..HEAD') to restrict to a commit range.",
+      "Use paths to filter commits that touched specific files.",
+      "Use author/since/until to narrow by author or date.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      maxCount: Type.Optional(
+        Type.Number({
+          description: "Limit output to this many commits (-n / --max-count).",
+        }),
+      ),
+      oneline: Type.Optional(
+        Type.Boolean({
+          description: "Compact one-line-per-commit output (--oneline). Implies abbreviated SHA.",
+        }),
+      ),
+      graph: Type.Optional(
+        Type.Boolean({
+          description: "Draw a text-based graph of the branch and merge history (--graph).",
+        }),
+      ),
+      all: Type.Optional(
+        Type.Boolean({
+          description: "Include all refs (branches, tags, remotes) in the output (--all).",
+        }),
+      ),
+      range: Type.Optional(
+        Type.String({
+          description:
+            "Commit range to show, e.g. 'main..HEAD', 'HEAD~5', 'v1.0..v2.0'. " +
+            "Passed directly to git log as a positional argument.",
+        }),
+      ),
+      paths: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Limit to commits that touched these files or directories.",
+        }),
+      ),
+      author: Type.Optional(
+        Type.String({
+          description: "Filter commits by author name or email (substring match).",
+        }),
+      ),
+      since: Type.Optional(
+        Type.String({
+          description: 'Show commits more recent than this date (--since). E.g. "2 weeks ago", "2024-01-01".',
+        }),
+      ),
+      until: Type.Optional(
+        Type.String({
+          description: 'Show commits older than this date (--until). E.g. "yesterday", "2024-06-01".',
+        }),
+      ),
+      format: Type.Optional(
+        Type.String({
+          description:
+            "Custom pretty-print format string passed to --format=<fmt>. " +
+            "E.g. '%H %s' for full SHA + subject. Overrides oneline when both are set.",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["log"]
+      if (params.maxCount !== undefined) args.push(`--max-count=${params.maxCount}`)
+      if (params.all) args.push("--all")
+      if (params.graph) args.push("--graph")
+      if (params.author) args.push(`--author=${params.author}`)
+      if (params.since) args.push(`--since=${params.since}`)
+      if (params.until) args.push(`--until=${params.until}`)
+      if (params.format) {
+        args.push(`--format=${params.format}`)
+      } else if (params.oneline) {
+        args.push("--oneline")
+      }
+      if (params.range) args.push(params.range)
+      if (params.paths && params.paths.length > 0) args.push("--", ...params.paths)
+      return runGit(args, ctx.cwd, signal, onUpdate)
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.maxCount !== undefined) flags.push(`-n ${args.maxCount}`)
+      if (args.all) flags.push("--all")
+      if (args.graph) flags.push("--graph")
+      if (args.oneline && !args.format) flags.push("--oneline")
+      if (args.author) flags.push(`--author=${args.author}`)
+      if (args.since) flags.push(`--since=${args.since}`)
+      if (args.until) flags.push(`--until=${args.until}`)
+      if (args.format) flags.push(`--format='${args.format}'`)
+
+      let text = theme.fg("toolTitle", theme.bold("git log"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+      if (args.range) text += theme.fg("accent", " " + args.range)
+      if (args.paths && args.paths.length > 0)
+        text += theme.fg("dim", " -- ") + theme.fg("accent", args.paths.join(" "))
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) return renderGitResult(result, expanded, isPartial, theme, "loading log…")
+
+      const details = result.details as GitDetails | undefined
+      const content = result.content[0]
+      const raw = content.type === "text" ? (content as { type: string; text: string }).text : ""
+      const lines = raw.length > 0 ? raw.split("\n") : []
+      const failed = details?.exitCode !== 0 && details?.exitCode != null
+
+      if (failed) return renderGitResult(result, expanded, isPartial, theme)
+      if (lines.length === 0) return new Text(theme.fg("success", "✓ no commits"), 0, 0)
+
+      const visibleLines = expanded ? lines.length : 20
+      const visible = lines.slice(0, visibleLines)
+      const hidden = lines.length - visible.length
+
+      // Colorize common log output patterns:
+      //   oneline:  "abc1234 subject line"
+      //   full:     "commit abc..."  /  "Author:"  /  "Date:"
+      //   graph:    lines starting with "*", "|", "/", "\\"
+      const styled = visible.map((l) => {
+        if (/^[*|/\\\s]+/.exec(l) && /\*/.exec(l) && !/^commit/.exec(l)) {
+          // graph line — highlight the commit sha if present
+          return theme.fg("dim", l).replace(/\b([0-9a-f]{7,40})\b/, (sha: string) => theme.fg("accent", sha))
+        }
+        if (/^commit\s+[0-9a-f]{40}/.exec(l)) {
+          return theme.fg("warning", l)
+        }
+        if (/^(Author|Date|Merge):/.exec(l)) {
+          return theme.fg("muted", l)
+        }
+        // oneline format: leading short sha
+        const onelineMatch = /^([0-9a-f]{7,40}) (.*)$/.exec(l)
+        if (onelineMatch) {
+          return theme.fg("accent", onelineMatch[1]) + " " + theme.fg("dim", onelineMatch[2])
+        }
+        return theme.fg("dim", l)
+      })
+
+      let text = styled.join("\n")
+      if (hidden > 0)
+        text += "\n" + theme.fg("muted", `  (${hidden} more line${hidden !== 1 ? "s" : ""},  ctrl+o to expand)`)
+      return new Text(text, 0, 0)
     },
   })
 
