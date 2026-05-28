@@ -24,6 +24,7 @@
       "./src/extensions/context-preloader.ts",
       "./src/extensions/git.ts",
       "./src/extensions/ripgrep.ts",
+      "./src/extensions/pfs.ts",
       "./src/extensions/task-runner.ts"
     ]
   },
