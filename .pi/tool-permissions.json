@@ -1,6 +1,6 @@
 {
   "defaultAction": "allow",
-  "allow": ["read:*", "run", "grep", "find", "write:*", "edit:*", "bfs", "ripgrep"],
-  "ask": ["mcp:*"],
+  "allow": ["read:*", "run", "grep", "find", "write:*", "edit:*", "bfs", "ripgrep", "git_status", "git_diff"],
+  "ask": ["mcp:*", "git_commit"],
   "deny": ["bash:*"]
 }
