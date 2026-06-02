@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { check, patternToRegex, type PermissionSet } from "./permissions.ts"
+import { checkRules, patternToRegex, type Rule, specificity } from "./permissions.ts"
 
 // ─── patternToRegex ───────────────────────────────────────────────────────────
 
@@ -78,40 +78,93 @@ describe("patternToRegex", () => {
   })
 })
 
-// ─── check ────────────────────────────────────────────────────────────────────
+// ─── specificity ──────────────────────────────────────────────────────────────
 
-describe("check", () => {
-  const set: PermissionSet = {
-    allow: ["pnpm run *", "npm run *", "git status"],
-    deny: ["pnpm run deploy *", "rm *"],
-  }
+describe("specificity", () => {
+  it("standalone * has zero specificity", () => {
+    expect(specificity("*")).toBe(0)
+  })
+  it("counts all non-wildcard characters", () => {
+    expect(specificity("bun run *")).toBe(8) // 'b','u','n',' ','r','u','n',' '
+  })
+  it("exact pattern has the highest specificity", () => {
+    expect(specificity("npm run build")).toBeGreaterThan(specificity("npm run *"))
+  })
+  it("longer prefix beats shorter prefix", () => {
+    expect(specificity("bun run *")).toBeGreaterThan(specificity("bun *"))
+  })
+})
 
-  it("returns 'allow' when a command matches an allow rule", () => {
-    expect(check(["pnpm", "run", "build"], set)).toBe("allow")
+// ─── checkRules ───────────────────────────────────────────────────────────────
+
+describe("checkRules", () => {
+  describe("basic level verdicts", () => {
+    const rules: Rule[] = [
+      { pattern: "pnpm run *", level: "allow", scope: "project" },
+      { pattern: "rm *", level: "deny", scope: "project" },
+      { pattern: "*", level: "ask", scope: "global" },
+    ]
+
+    it("returns allow for a matching allow rule", () => {
+      expect(checkRules(["pnpm", "run", "build"], rules)).toBe("allow")
+    })
+    it("returns deny for a matching deny rule", () => {
+      expect(checkRules(["rm", "-rf", "."], rules)).toBe("deny")
+    })
+    it("returns ask when only the catch-all matches", () => {
+      expect(checkRules(["node", "index.js"], rules)).toBe("ask")
+    })
+    it("returns undecided when no rules are present", () => {
+      expect(checkRules(["anything"], [])).toBe("undecided")
+    })
   })
 
-  it("returns 'deny' when a command matches a deny rule", () => {
-    expect(check(["pnpm", "run", "deploy", "prod"], set)).toBe("deny")
+  describe("specificity resolution", () => {
+    const rules: Rule[] = [
+      { pattern: "*", level: "ask", scope: "global" },
+      { pattern: "bun *", level: "ask", scope: "global" },
+      { pattern: "bun run *", level: "allow", scope: "project" },
+    ]
+
+    it("most specific rule wins regardless of order in the array", () => {
+      expect(checkRules(["bun", "run", "build"], rules)).toBe("allow")
+    })
+    it("medium-specificity rule wins over catch-all", () => {
+      expect(checkRules(["bun", "add", "react"], rules)).toBe("ask")
+    })
+    it("catch-all fires when nothing more specific matches", () => {
+      expect(checkRules(["node", "--version"], rules)).toBe("ask")
+    })
   })
 
-  it("deny takes precedence over allow", () => {
-    // "pnpm run deploy *" is denied even though "pnpm run *" is allowed
-    expect(check(["pnpm", "run", "deploy", "anything"], set)).toBe("deny")
+  describe("scope tiebreaking", () => {
+    it("project beats global at equal specificity", () => {
+      const rules: Rule[] = [
+        { pattern: "bun run *", level: "deny", scope: "global" },
+        { pattern: "bun run *", level: "allow", scope: "project" },
+      ]
+      expect(checkRules(["bun", "run", "build"], rules)).toBe("allow")
+    })
+    it("project beats user at equal specificity", () => {
+      const rules: Rule[] = [
+        { pattern: "bun run *", level: "ask", scope: "user" },
+        { pattern: "bun run *", level: "allow", scope: "project" },
+      ]
+      expect(checkRules(["bun", "run", "build"], rules)).toBe("allow")
+    })
+    it("user beats global at equal specificity", () => {
+      const rules: Rule[] = [
+        { pattern: "bun run *", level: "deny", scope: "global" },
+        { pattern: "bun run *", level: "allow", scope: "user" },
+      ]
+      expect(checkRules(["bun", "run", "build"], rules)).toBe("allow")
+    })
   })
 
-  it("returns 'undecided' when no rule matches", () => {
-    expect(check(["bun", "run", "build"], set)).toBe("undecided")
-  })
-
-  it("matches an exact allow rule", () => {
-    expect(check(["git", "status"], set)).toBe("allow")
-  })
-
-  it("does not match the exact allow when extra args are present", () => {
-    expect(check(["git", "status", "--short"], set)).toBe("undecided")
-  })
-
-  it("returns 'deny' for a denied command with no matching allow", () => {
-    expect(check(["rm", "-rf", "."], set)).toBe("deny")
+  describe("undecided fallback", () => {
+    it("returns undecided when no pattern matches", () => {
+      const rules: Rule[] = [{ pattern: "pnpm run *", level: "allow", scope: "project" }]
+      expect(checkRules(["bun", "run", "build"], rules)).toBe("undecided")
+    })
   })
 })

@@ -10,6 +10,7 @@
  *   git_restore  — restore working tree files or unstage changes (git restore)
  *   git_commit   — record a commit (git commit)
  *   git_log      — show commit history (git log)
+ *   git_push     — push commits to a remote (git push)
  *
  * Each tool runs the real git binary, streams output, and renders a compact
  * summary in the TUI.  Destructive flags (--force on add/rm, --amend on
@@ -159,13 +160,28 @@ function statusLabel(ch: string): string {
   return STATUS_LABELS[ch] ?? ch
 }
 
+/** Append an italicised note to the first text content block of a result. */
+interface GitResult {
+  content: { type: "text"; text: string }[]
+  details: unknown
+  isError: boolean
+}
+
+function appendResultNote(result: GitResult, note: string): GitResult {
+  const existing = result.content[0]?.text ?? ""
+  return {
+    ...result,
+    content: [{ type: "text", text: existing ? `${existing}\n\n[${note}]` : `[${note}]` }],
+  }
+}
+
 /** Run a git sub-command, streaming stdout+stderr via onUpdate. */
 async function runGit(
   subArgs: string[],
   cwd: string,
   signal: AbortSignal | undefined,
   onUpdate: ((partial: { content: { type: "text"; text: string }[]; details: GitDetails }) => void) | undefined,
-): Promise<{ content: { type: "text"; text: string }[]; details: GitDetails; isError: boolean }> {
+): Promise<GitResult> {
   const { lines, exitCode, spawnError } = await spawnStreaming("git", subArgs, {
     cwd,
     signal,
@@ -242,10 +258,10 @@ const GIT_LEARNING_MODE_PROMPT = `
 ## Git tools — learning mode
 
 You have access to a limited set of structured git tools: git_status, git_add,
-git_rm, git_mv, git_diff, git_restore, git_commit, and git_log.
+git_rm, git_mv, git_diff, git_restore, git_commit, git_log, and git_push.
 
 If you find yourself needing a git operation that is NOT covered by these tools
-(e.g. git rebase, git stash, git push, git pull, git cherry-pick,
+(e.g. git rebase, git stash, git pull, git cherry-pick,
 or any option/flag not exposed as a parameter), do NOT attempt a workaround or
 skip the operation silently.
 skip the operation silently.
@@ -918,6 +934,90 @@ export default function (pi: ExtensionAPI) {
     },
   })
 
+  // ── git_push ──────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_push",
+    label: "git push",
+    description: [
+      "Push commits to a remote repository (git push).",
+      "Only use when the user explicitly asks to push.",
+      "Defaults to the tracking remote and branch when remote/branch are omitted.",
+      "Use setUpstream=true (-u) when pushing a new branch for the first time.",
+      "Use forceWithLease=true to force-push safely — fails if the remote has diverged unexpectedly.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      remote: Type.Optional(
+        Type.String({
+          description: "Remote name to push to (e.g. 'origin'). Defaults to the tracking remote.",
+        }),
+      ),
+      branch: Type.Optional(
+        Type.String({
+          description: "Branch to push (e.g. 'main'). Defaults to the current branch.",
+        }),
+      ),
+      setUpstream: Type.Optional(
+        Type.Boolean({
+          description:
+            "Set the upstream tracking reference for the branch (-u / --set-upstream). " +
+            "Use when pushing a new branch for the first time.",
+        }),
+      ),
+      forceWithLease: Type.Optional(
+        Type.Boolean({
+          description:
+            "Force-push only if the remote tip matches what was last fetched (--force-with-lease). " +
+            "Safer than --force — aborts if someone else pushed in the meantime.",
+        }),
+      ),
+      tags: Type.Optional(
+        Type.Boolean({
+          description: "Push all local tags to the remote (--tags).",
+        }),
+      ),
+      dryRun: Type.Optional(
+        Type.Boolean({
+          description: "Show what would be pushed without actually pushing (--dry-run).",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["push"]
+      if (params.setUpstream) args.push("--set-upstream")
+      if (params.forceWithLease) args.push("--force-with-lease")
+      if (params.tags) args.push("--tags")
+      if (params.dryRun) args.push("--dry-run")
+      if (params.remote) args.push(params.remote)
+      if (params.branch) args.push(params.branch)
+      const result = await runGit(args, ctx.cwd, signal, onUpdate)
+      return appendResultNote(
+        result,
+        "Do not push automatically. This was a one-time approval — ask the user before pushing again.",
+      )
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.setUpstream) flags.push("-u")
+      if (args.forceWithLease) flags.push("--force-with-lease")
+      if (args.tags) flags.push("--tags")
+      if (args.dryRun) flags.push("--dry-run")
+
+      let text = theme.fg("toolTitle", theme.bold("git push"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+      if (args.remote) text += theme.fg("accent", " " + args.remote)
+      if (args.branch) text += theme.fg("accent", " " + args.branch)
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      return renderGitResult(result, expanded, isPartial, theme, "pushing…")
+    },
+  })
+
   // ── git_commit ─────────────────────────────────────────────────────────────
 
   pi.registerTool({
@@ -1000,7 +1100,11 @@ export default function (pi: ExtensionAPI) {
       if (params.date) args.push("--date", params.date)
       if (params.message) args.push("--message", params.message)
 
-      return runGit(args, ctx.cwd, signal, onUpdate)
+      const result = await runGit(args, ctx.cwd, signal, onUpdate)
+      return appendResultNote(
+        result,
+        "Do not commit automatically. This was a one-time approval — ask the user before committing again.",
+      )
     },
 
     renderCall(args, theme) {

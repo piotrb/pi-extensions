@@ -1,5 +1,5 @@
 /**
- * permissions — pattern-based allow/deny rule matching.
+ * permissions — pattern-based rule matching with three verdict levels.
  *
  * Pattern syntax mirrors Claude Code's Bash permission syntax:
  *   No wildcard     — exact match against the command string
@@ -7,13 +7,29 @@
  *   Trailing ':*'   — identical to trailing ' *'
  *   '*' elsewhere   — glob-style: * matches any sequence including spaces
  *   Standalone '*'  — matches everything
+ *
+ * Resolution — when multiple rules match a command, the most specific wins.
+ * Specificity is the number of non-wildcard characters in the pattern.
+ * Ties are broken by scope: project > user > global.
  */
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
-export interface PermissionSet {
-  allow: string[]
-  deny: string[]
+export type RuleLevel = "allow" | "ask" | "deny"
+export type RuleScope = "project" | "user" | "global"
+
+export interface Rule {
+  pattern: string
+  level: RuleLevel
+  scope: RuleScope
+}
+
+// ─── scope priority ───────────────────────────────────────────────────────────
+
+const SCOPE_PRIORITY: Record<RuleScope, number> = {
+  project: 2,
+  user: 1,
+  global: 0,
 }
 
 // ─── patternToRegex ───────────────────────────────────────────────────────────
@@ -61,17 +77,44 @@ export function patternToRegex(pattern: string): RegExp {
   return new RegExp(regexStr)
 }
 
-// ─── check ────────────────────────────────────────────────────────────────────
+// ─── specificity ──────────────────────────────────────────────────────────────
 
 /**
- * Test a command against a PermissionSet.
- *
- * Evaluation order: deny → allow → undecided.
- * Deny rules always win over allow rules.
+ * Count the non-wildcard characters in a pattern.
+ * Higher = more specific.
  */
-export function check(cmd: string[], set: PermissionSet): "allow" | "deny" | "undecided" {
+export function specificity(pattern: string): number {
+  // eslint-disable-next-line @typescript-eslint/no-misused-spread
+  return [...pattern].filter((c) => c !== "*").length
+}
+
+// ─── checkRules ───────────────────────────────────────────────────────────────
+
+/**
+ * Test a command against an ordered set of rules.
+ *
+ * The most specific matching rule wins (highest non-wildcard character count).
+ * Ties are broken by scope: project > user > global.
+ * Returns "undecided" if no rule matches.
+ */
+export function checkRules(cmd: string[], rules: Rule[]): RuleLevel | "undecided" {
   const cmdStr = cmd.join(" ")
-  if (set.deny.some((p) => patternToRegex(p).test(cmdStr))) return "deny"
-  if (set.allow.some((p) => patternToRegex(p).test(cmdStr))) return "allow"
-  return "undecided"
+  let best: Rule | null = null
+  let bestSpec = -1
+  let bestScopePriority = -1
+
+  for (const rule of rules) {
+    if (!patternToRegex(rule.pattern).test(cmdStr)) continue
+
+    const spec = specificity(rule.pattern)
+    const scopePri = SCOPE_PRIORITY[rule.scope]
+
+    if (spec > bestSpec || (spec === bestSpec && scopePri > bestScopePriority)) {
+      best = rule
+      bestSpec = spec
+      bestScopePriority = scopePri
+    }
+  }
+
+  return best ? best.level : "undecided"
 }

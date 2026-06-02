@@ -1,0 +1,7 @@
+{
+  "rules": {
+    "pnpm run *": "allow",
+    "pnpm add *": "allow",
+    "pnpm remove *": "allow"
+  }
+}

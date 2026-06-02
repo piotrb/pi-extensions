@@ -1,0 +1,6 @@
+{
+  "defaultAction": "allow",
+  "allow": ["read:*", "run", "grep", "find", "write:*", "edit:*", "bfs", "ripgrep"],
+  "ask": ["mcp:*"],
+  "deny": ["bash:*"]
+}

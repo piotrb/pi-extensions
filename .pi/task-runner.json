@@ -1,4 +1,0 @@
-{
-  "allowedCommands": ["pnpm run *", "pnpm add *", "pnpm remove *"],
-  "replaceDefaults": true
-}

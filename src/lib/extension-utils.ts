@@ -43,6 +43,11 @@ export interface SpawnStreamingOptions {
    * for that.
    */
   onLines?: (lines: string[]) => void
+  /**
+   * Called synchronously with the spawned ChildProcess immediately after
+   * spawn. Use this to register the child for external kill signals.
+   */
+  onSpawn?: (child: ChildProcess) => void
 }
 
 // ─── progressiveKill ───────────────────────────────────────────────────────────────
@@ -63,7 +68,7 @@ export function progressiveKill(child: ChildProcess, termDelayMs = 5_000, killDe
 
   const killTimer = setTimeout(() => {
     child.kill("SIGKILL")
-  }, termDelayMs + killDelayMs)
+  }, killDelayMs)
 
   const cleanup = () => {
     clearTimeout(termTimer)
@@ -121,7 +126,7 @@ export function scheduleProcessTimeout(ms: number, child: ChildProcess, onTimeou
  * - ENOENT is converted to a friendly error using `notFoundHint`.
  */
 export function spawnStreaming(bin: string, args: string[], options: SpawnStreamingOptions): Promise<SpawnResult> {
-  const { cwd, signal, env, notFoundHint, onLines, timeoutMs = 30_000 } = options
+  const { cwd, signal, env, notFoundHint, onLines, onSpawn, timeoutMs = 30_000 } = options
 
   return new Promise<SpawnResult>((resolve) => {
     const outputLines: string[] = []
@@ -135,6 +140,7 @@ export function spawnStreaming(bin: string, args: string[], options: SpawnStream
       env: env ? { ...process.env, ...env } : process.env,
     })
 
+    onSpawn?.(child)
     signal?.addEventListener("abort", () => progressiveKill(child))
 
     scheduleProcessTimeout(timeoutMs, child, () => {
@@ -153,7 +159,7 @@ export function spawnStreaming(bin: string, args: string[], options: SpawnStream
       pending = parts.pop() ?? ""
       if (parts.length === 0) return // no complete lines yet
       outputLines.push(...parts)
-      onLines?.(outputLines)
+      if (!settled) onLines?.(outputLines)
     }
 
     child.stdout.on("data", handleChunk)
