@@ -1,6 +1,9 @@
 {
   "rules": {
     "pnpm run *": "allow",
+    "pnpm install": "allow",
+    "pnpm -r run *": "allow",
+    "pnpm --filter * run *": "allow",
     "pnpm add *": "allow",
     "pnpm remove *": "allow"
   }

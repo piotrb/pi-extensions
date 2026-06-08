@@ -1,6 +1,20 @@
 {
   "defaultAction": "allow",
-  "allow": ["read:*", "run", "grep", "find", "write:*", "edit:*", "bfs", "ripgrep", "git_status", "git_diff"],
-  "ask": ["mcp:*", "git_commit"],
+  "allow": [
+    "read:*",
+    "run",
+    "grep",
+    "find",
+    "bfs",
+    "ripgrep",
+    "git_status",
+    "git_diff",
+    "pfs_mv",
+    "write:/Users/piotr/Work/personal/pi-extensions-wip/packages/*",
+    "edit:/Users/piotr/Work/personal/pi-extensions-wip/packages/*",
+    "write:/Users/piotr/Work/personal/pi-extensions-wip/.ai/*",
+    "edit:/Users/piotr/Work/personal/pi-extensions-wip/.ai/*"
+  ],
+  "ask": ["mcp:*", "git_commit", "edit:.pi/*", "edit:package.json", "git_mv"],
   "deny": ["bash:*"]
 }

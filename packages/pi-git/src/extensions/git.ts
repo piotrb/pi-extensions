@@ -1,0 +1,1195 @@
+/**
+ * git — structured tools for common git staging and commit operations.
+ *
+ * Exposes four tools:
+ *   git_status   — show working tree status (parsed porcelain v2 → JSON)
+ *   git_add      — stage files (git add)
+ *   git_rm       — remove files from index / working tree (git rm)
+ *   git_mv       — move or rename files (git mv)
+ *   git_diff     — show changes between commits, index, and working tree (git diff)
+ *   git_restore  — restore working tree files or unstage changes (git restore)
+ *   git_commit   — record a commit (git commit)
+ *   git_log      — show commit history (git log)
+ *   git_push     — push commits to a remote (git push)
+ *
+ * Each tool runs the real git binary, streams output, and renders a compact
+ * summary in the TUI.  Destructive flags (--force on add/rm, --amend on
+ * commit) are explicit typed parameters so the LLM must be intentional.
+ */
+
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { Text } from "@earendil-works/pi-tui"
+import { spawnStreaming } from "pi-extension-utils"
+import { Type } from "typebox"
+
+// ─── shared ──────────────────────────────────────────────────────────────────
+
+interface GitDetails {
+  argv: string[] // full git sub-command + args for display
+  exitCode: number | null
+  totalLines: number
+  streaming?: boolean
+}
+
+type Theme = Parameters<NonNullable<Parameters<ExtensionAPI["registerTool"]>[0]["renderResult"]>>[2]
+
+// ─── porcelain v2 parser ─────────────────────────────────────────────────────
+
+interface BranchInfo {
+  oid: string
+  head: string
+  upstream?: string
+  ahead?: number
+  behind?: number
+}
+
+interface OrdinaryEntry {
+  type: "ordinary"
+  indexStatus: string
+  worktreeStatus: string
+  path: string
+}
+
+interface RenamedEntry {
+  type: "renamed"
+  indexStatus: string
+  worktreeStatus: string
+  path: string
+  origPath: string
+  score: number
+}
+
+interface UnmergedEntry {
+  type: "unmerged"
+  indexStatus: string
+  worktreeStatus: string
+  path: string
+}
+
+interface UntrackedEntry {
+  type: "untracked"
+  path: string
+}
+
+type StatusEntry = OrdinaryEntry | RenamedEntry | UnmergedEntry | UntrackedEntry
+
+interface GitStatus {
+  branch: BranchInfo
+  entries: StatusEntry[]
+  stats: { staged: number; unstaged: number; untracked: number; unmerged: number }
+}
+
+function parsePorcelainV2(lines: string[]): GitStatus {
+  const branch: BranchInfo = { oid: "", head: "" }
+  const entries: StatusEntry[] = []
+
+  for (const line of lines) {
+    // ── branch headers ────────────────────────────────────────────────────
+    if (line.startsWith("# branch.oid ")) {
+      branch.oid = line.slice(13)
+    } else if (line.startsWith("# branch.head ")) {
+      branch.head = line.slice(14)
+    } else if (line.startsWith("# branch.upstream ")) {
+      branch.upstream = line.slice(18)
+    } else if (line.startsWith("# branch.ab ")) {
+      const m = /^\+(-?\d+) -(-?\d+)$/.exec(line.slice(12))
+      if (m) {
+        branch.ahead = parseInt(m[1]!, 10)
+        branch.behind = parseInt(m[2]!, 10)
+      }
+    }
+    // ── ordinary changed entry ────────────────────────────────────────────
+    // 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+    else if (line.startsWith("1 ")) {
+      const parts = line.split(" ")
+      const xy = parts[1] ?? ""
+      const path = parts.slice(8).join(" ")
+      entries.push({ type: "ordinary", indexStatus: xy[0] ?? " ", worktreeStatus: xy[1] ?? " ", path })
+    }
+    // ── renamed / copied entry ────────────────────────────────────────────
+    // 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>\t<origPath>
+    else if (line.startsWith("2 ")) {
+      const parts = line.split(" ")
+      const xy = parts[1] ?? ""
+      const scoreField = parts[8] ?? ""
+      const score = parseInt(scoreField.slice(1), 10)
+      const pathField = parts.slice(9).join(" ")
+      const tabIdx = pathField.indexOf("\t")
+      const path = tabIdx === -1 ? pathField : pathField.slice(0, tabIdx)
+      const origPath = tabIdx === -1 ? "" : pathField.slice(tabIdx + 1)
+      entries.push({ type: "renamed", indexStatus: xy[0] ?? " ", worktreeStatus: xy[1] ?? " ", path, origPath, score })
+    }
+    // ── unmerged entry ────────────────────────────────────────────────────
+    // u <xy> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+    else if (line.startsWith("u ")) {
+      const parts = line.split(" ")
+      const xy = parts[1] ?? ""
+      const path = parts.slice(10).join(" ")
+      entries.push({ type: "unmerged", indexStatus: xy[0] ?? " ", worktreeStatus: xy[1] ?? " ", path })
+    }
+    // ── untracked ─────────────────────────────────────────────────────────
+    else if (line.startsWith("? ")) {
+      entries.push({ type: "untracked", path: line.slice(2) })
+    }
+  }
+
+  const staged = entries.filter(
+    (e) => e.type !== "untracked" && e.type !== "unmerged" && e.indexStatus !== " " && e.indexStatus !== ".",
+  ).length
+  const unstaged = entries.filter(
+    (e) => e.type !== "untracked" && e.type !== "unmerged" && e.worktreeStatus !== " " && e.worktreeStatus !== ".",
+  ).length
+  const untracked = entries.filter((e) => e.type === "untracked").length
+  const unmerged = entries.filter((e) => e.type === "unmerged").length
+
+  return { branch, entries, stats: { staged, unstaged, untracked, unmerged } }
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  M: "modified",
+  A: "added",
+  D: "deleted",
+  R: "renamed",
+  C: "copied",
+  U: "unmerged",
+  "?": "untracked",
+}
+
+function statusLabel(ch: string): string {
+  return STATUS_LABELS[ch] ?? ch
+}
+
+/** Append an italicised note to the first text content block of a result. */
+interface GitResult {
+  content: { type: "text"; text: string }[]
+  details: unknown
+  isError: boolean
+}
+
+function appendResultNote(result: GitResult, note: string): GitResult {
+  const existing = result.content[0]?.text ?? ""
+  return {
+    ...result,
+    content: [{ type: "text", text: existing ? `${existing}\n\n[${note}]` : `[${note}]` }],
+  }
+}
+
+/** Run a git sub-command, streaming stdout+stderr via onUpdate. */
+async function runGit(
+  subArgs: string[],
+  cwd: string,
+  signal: AbortSignal | undefined,
+  onUpdate: ((partial: { content: { type: "text"; text: string }[]; details: GitDetails }) => void) | undefined,
+): Promise<GitResult> {
+  const { lines, exitCode, spawnError } = await spawnStreaming("git", subArgs, {
+    cwd,
+    signal,
+    notFoundHint: "Install git: https://git-scm.com",
+    onLines: (accumulated) => {
+      onUpdate?.({
+        content: [{ type: "text", text: accumulated.join("\n") }],
+        details: { argv: subArgs, totalLines: accumulated.length, exitCode: null, streaming: true },
+      })
+    },
+  })
+
+  if (spawnError) {
+    return {
+      content: [{ type: "text", text: spawnError }],
+      details: { argv: subArgs, totalLines: 0, exitCode: -1 },
+      isError: true,
+    }
+  }
+
+  return {
+    content: [{ type: "text", text: lines.join("\n") }],
+    details: { argv: subArgs, totalLines: lines.length, exitCode },
+    isError: exitCode !== 0,
+  }
+}
+
+/** Render a finished git result: status badge + output lines. */
+function renderGitResult(
+  result: { content: { type: string; text?: string }[]; details: unknown; isError?: boolean },
+  expanded: boolean,
+  isPartial: boolean,
+  theme: Theme,
+  runningLabel = "running…",
+  visibleLines = 20,
+): InstanceType<typeof Text> {
+  const details = result.details as GitDetails | undefined
+  const content = result.content[0]!
+  const raw = content.type === "text" ? (content as { type: string; text: string }).text : ""
+  const lines = raw.length > 0 ? raw.split("\n") : []
+  const totalLines = lines.length
+
+  if (isPartial) {
+    const tail = lines.slice(-visibleLines)
+    let text = theme.fg("warning", `▶ ${runningLabel}`)
+    const hidden = totalLines - tail.length
+    if (hidden > 0) text += "\n" + theme.fg("muted", `  (${hidden} earlier lines)`)
+    if (tail.length > 0) text += "\n" + tail.map((l) => theme.fg("dim", l)).join("\n")
+    return new Text(text, 0, 0)
+  }
+
+  const failed = details?.exitCode !== 0 && details?.exitCode != null
+  let text = failed ? theme.fg("error", `✗ exit ${details.exitCode}`) : theme.fg("success", "✓ done")
+
+  if (totalLines > 0) {
+    if (expanded) {
+      text += "\n" + lines.map((l) => theme.fg("dim", l)).join("\n")
+    } else {
+      const visible = lines.slice(0, visibleLines)
+      text += "\n" + visible.map((l) => theme.fg("dim", l)).join("\n")
+      const hidden = totalLines - visible.length
+      if (hidden > 0) {
+        text += "\n" + theme.fg("muted", `  (${hidden} more line${hidden !== 1 ? "s" : ""},  ctrl+o to expand)`)
+      }
+    }
+  }
+
+  return new Text(text, 0, 0)
+}
+
+// ─── system prompt ──────────────────────────────────────────────────────────
+
+const GIT_LEARNING_MODE_PROMPT = `
+## Git tools — learning mode
+
+You have access to a limited set of structured git tools: git_status, git_add,
+git_rm, git_mv, git_diff, git_restore, git_commit, git_log, and git_push.
+
+If you find yourself needing a git operation that is NOT covered by these tools
+(e.g. git rebase, git stash, git pull, git cherry-pick,
+or any option/flag not exposed as a parameter), do NOT attempt a workaround or
+skip the operation silently.
+skip the operation silently.
+
+Instead, stop immediately and respond with a message in this format:
+
+  ❌ Git learning-mode gap detected
+  Missing: <the exact git command or option you need>
+  Reason: <brief explanation of what you were trying to do>
+
+This is intentional — the gap will be used to extend the toolset.
+`.trim()
+
+// ─── extension ───────────────────────────────────────────────────────────────
+
+export default function (pi: ExtensionAPI) {
+  pi.on("before_agent_start", (event: { systemPrompt: string }) => {
+    return { systemPrompt: `${event.systemPrompt}\n\n${GIT_LEARNING_MODE_PROMPT}` }
+  })
+
+  // ── git_add ────────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_status",
+    label: "git status",
+    description: [
+      "Show the working tree status (git status).",
+      "Returns parsed JSON — branch info, staged/unstaged/untracked entries, and summary stats.",
+      "Safe to call at any time to inspect repo state.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      paths: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Limit status to these paths (default: entire working tree).",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const args = ["status", "--porcelain=v2", "--branch"]
+      if (params.paths && params.paths.length > 0) args.push("--", ...params.paths)
+
+      const { lines, exitCode, spawnError } = await spawnStreaming("git", args, {
+        cwd: ctx.cwd,
+        signal,
+        notFoundHint: "Install git: https://git-scm.com",
+      })
+
+      if (spawnError) {
+        return {
+          content: [{ type: "text" as const, text: spawnError }],
+          details: { exitCode: -1 },
+          isError: true,
+        }
+      }
+
+      const status = parsePorcelainV2(lines)
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(status, null, 2) }],
+        details: { status, exitCode },
+        isError: exitCode !== 0,
+      }
+    },
+
+    renderCall(_args, theme) {
+      return new Text(theme.fg("toolTitle", theme.bold("git status")), 0, 0)
+    },
+
+    renderResult(result, { expanded }, theme) {
+      const details = result.details as { status?: GitStatus; exitCode: number | null }
+      const status = details.status
+
+      if (!status) {
+        const c = result.content[0]!
+        const raw = c.type === "text" ? (c as { type: string; text: string }).text : ""
+        return new Text(theme.fg("error", raw), 0, 0)
+      }
+
+      const { branch, entries, stats } = status
+      const lines: string[] = []
+
+      // branch line
+      let branchLine = theme.fg("toolTitle", "branch ") + theme.fg("accent", branch.head)
+      if (branch.upstream) {
+        branchLine += theme.fg("dim", " → ") + theme.fg("muted", branch.upstream)
+      }
+      if (branch.ahead !== undefined && branch.behind !== undefined) {
+        const parts: string[] = []
+        if (branch.ahead > 0) parts.push(theme.fg("success", `↑${branch.ahead}`))
+        if (branch.behind > 0) parts.push(theme.fg("warning", `↓${branch.behind}`))
+        if (parts.length > 0) branchLine += " " + parts.join(" ")
+      }
+      lines.push(branchLine)
+
+      if (entries.length === 0) {
+        lines.push(theme.fg("success", "✓ clean"))
+        return new Text(lines.join("\n"), 0, 0)
+      }
+
+      // summary badges
+      const badges: string[] = []
+      if (stats.staged > 0) badges.push(theme.fg("success", `${stats.staged} staged`))
+      if (stats.unstaged > 0) badges.push(theme.fg("warning", `${stats.unstaged} unstaged`))
+      if (stats.untracked > 0) badges.push(theme.fg("dim", `${stats.untracked} untracked`))
+      if (stats.unmerged > 0) badges.push(theme.fg("error", `${stats.unmerged} unmerged`))
+      if (badges.length > 0) lines.push(badges.join("  "))
+
+      if (!expanded) return new Text(lines.join("\n"), 0, 0)
+
+      // per-entry detail (expanded)
+      for (const entry of entries) {
+        if (entry.type === "untracked") {
+          lines.push(theme.fg("dim", "  ? ") + theme.fg("dim", entry.path))
+        } else if (entry.type === "unmerged") {
+          lines.push(theme.fg("error", "  U ") + entry.path)
+        } else if (entry.type === "renamed") {
+          const iLabel = statusLabel(entry.indexStatus)
+          const wLabel = entry.worktreeStatus !== " " ? "+" + statusLabel(entry.worktreeStatus) : ""
+          const label = [iLabel, wLabel].filter(Boolean).join("/")
+          lines.push(
+            theme.fg("success", "  R ") +
+              theme.fg("accent", entry.origPath) +
+              theme.fg("dim", " → ") +
+              theme.fg("accent", entry.path) +
+              theme.fg("muted", ` (${label})`),
+          )
+        } else {
+          const iCh = entry.indexStatus !== " " ? entry.indexStatus : ""
+          const wCh = entry.worktreeStatus !== " " ? entry.worktreeStatus : ""
+          const iColor = iCh ? "success" : "dim"
+          const wColor = wCh ? "warning" : "dim"
+          const indicator = theme.fg(iColor, iCh || " ") + theme.fg(wColor, wCh || " ")
+          lines.push("  " + indicator + " " + theme.fg("dim", entry.path))
+        }
+      }
+
+      return new Text(lines.join("\n"), 0, 0)
+    },
+  })
+
+  pi.registerTool({
+    name: "git_add",
+    label: "git add",
+    description: [
+      "Stage specific files or directories for the next commit (git add).",
+      "Only use when the user explicitly asks to stage or commit files — do not stage proactively after edits.",
+      "Always confirm with git_status first to understand what will be staged.",
+      "Provide explicit paths — do not stage blindly.",
+      "Use trackedOnly=true to stage modifications and deletions across all tracked files without listing them individually.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      paths: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "Files or directories to stage. Supports pathspecs and globs. " + "Required unless trackedOnly is true.",
+        }),
+      ),
+      trackedOnly: Type.Optional(
+        Type.Boolean({
+          description:
+            "Stage modifications and deletions to already-tracked files only (-u). " +
+            "Does not stage untracked new files. Use instead of listing every path when staging all tracked changes.",
+        }),
+      ),
+      dryRun: Type.Optional(
+        Type.Boolean({
+          description: "Show what would be staged without actually staging anything (-n).",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["add"]
+      if (params.dryRun) args.push("--dry-run")
+      if (params.trackedOnly) {
+        args.push("--update")
+      } else {
+        args.push("--")
+        if (params.paths && params.paths.length > 0) args.push(...params.paths)
+      }
+      return runGit(args, ctx.cwd, signal, onUpdate)
+    },
+
+    renderCall(args, theme) {
+      let text = theme.fg("toolTitle", theme.bold("git add"))
+      if (args.dryRun) text += theme.fg("dim", " --dry-run")
+      if (args.trackedOnly) {
+        text += theme.fg("accent", " (tracked files)")
+      } else if (args.paths && args.paths.length > 0) {
+        text += theme.fg("accent", " " + args.paths.join(" "))
+      }
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      return renderGitResult(result, expanded, isPartial, theme, "staging…")
+    },
+  })
+
+  // ── git_rm ─────────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_rm",
+    label: "git rm",
+    description: [
+      "Remove files from the index and optionally the working tree (git rm).",
+      "Only use when the user explicitly asks to remove files from git tracking.",
+      "Use cached=true to only remove from the index while keeping the file on disk",
+      "(useful for untracking a file without deleting it).",
+      "Use recursive=true when removing a directory.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      paths: Type.Array(Type.String(), {
+        description: "Files or directories to remove. At least one path is required.",
+        minItems: 1,
+      }),
+      cached: Type.Optional(
+        Type.Boolean({
+          description:
+            "Remove from the index only; leave the file on disk (--cached). " +
+            "Use this to stop tracking a file without deleting it.",
+        }),
+      ),
+      recursive: Type.Optional(
+        Type.Boolean({
+          description: "Allow recursive removal when a directory is given as a path (-r).",
+        }),
+      ),
+      force: Type.Optional(
+        Type.Boolean({
+          description:
+            "Override the up-to-date safety check and force removal (-f). " +
+            "Use with care — staged changes will be lost.",
+        }),
+      ),
+      dryRun: Type.Optional(
+        Type.Boolean({
+          description: "Don't actually remove anything; show what would be removed (-n).",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["rm"]
+      if (params.cached) args.push("--cached")
+      if (params.recursive) args.push("-r")
+      if (params.force) args.push("--force")
+      if (params.dryRun) args.push("--dry-run")
+      args.push("--")
+      args.push(...params.paths)
+      return runGit(args, ctx.cwd, signal, onUpdate)
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.cached) flags.push("--cached")
+      if (args.recursive) flags.push("-r")
+      if (args.force) flags.push("-f")
+      if (args.dryRun) flags.push("--dry-run")
+
+      let text = theme.fg("toolTitle", theme.bold("git rm"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+      text += theme.fg("accent", " " + args.paths.join(" "))
+
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      return renderGitResult(result, expanded, isPartial, theme, "removing…")
+    },
+  })
+
+  // ── git_mv ─────────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_mv",
+    label: "git mv",
+    description: [
+      "Move or rename a file, directory, or symlink (git mv).",
+      "Only use when the user explicitly asks to move or rename files.",
+      "Updates the index automatically — no separate git add needed.",
+      "Use force=true to overwrite an existing destination file.",
+      "Use dryRun=true to preview what would happen without making changes.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      source: Type.Union([Type.String(), Type.Array(Type.String(), { minItems: 1 })], {
+        description: "Source path(s). When moving multiple files, destination must be a directory.",
+      }),
+      destination: Type.String({
+        description: "Destination path or directory.",
+      }),
+      force: Type.Optional(
+        Type.Boolean({
+          description: "Allow overwriting an existing file at the destination (-f).",
+        }),
+      ),
+      dryRun: Type.Optional(
+        Type.Boolean({
+          description: "Show what would be moved without actually moving anything (-n).",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["mv"]
+      if (params.force) args.push("--force")
+      if (params.dryRun) args.push("--dry-run")
+      const sources = Array.isArray(params.source) ? params.source : [params.source]
+      args.push(...sources, params.destination)
+      return runGit(args, ctx.cwd, signal, onUpdate)
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.force) flags.push("-f")
+      if (args.dryRun) flags.push("--dry-run")
+
+      const sources = Array.isArray(args.source) ? args.source : [args.source]
+      let text = theme.fg("toolTitle", theme.bold("git mv"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+      text += theme.fg("accent", " " + sources.join(" "))
+      text += theme.fg("dim", " → ")
+      text += theme.fg("accent", args.destination)
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      return renderGitResult(result, expanded, isPartial, theme, "moving…")
+    },
+  })
+
+  // ── git_diff ───────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_diff",
+    label: "git diff",
+    description: [
+      "Show changes between commits, the index, and the working tree (git diff).",
+      "Default (no flags): unstaged changes in the working tree vs the index.",
+      "Use staged=true to show staged changes (index vs HEAD).",
+      "Use base and target to compare two commits/branches.",
+      "Use paths to limit the diff to specific files or directories.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      staged: Type.Optional(
+        Type.Boolean({
+          description: "Show staged changes (index vs HEAD). Equivalent to git diff --staged.",
+        }),
+      ),
+      base: Type.Optional(
+        Type.String({
+          description:
+            "Compare from this commit, branch, or tag. " +
+            "When only base is given, diffs base against the working tree. " +
+            "Combine with target to compare two refs (e.g. base='main', target='HEAD').",
+        }),
+      ),
+      target: Type.Optional(
+        Type.String({
+          description: "Compare to this commit, branch, or tag. Requires base to also be set.",
+        }),
+      ),
+      paths: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Limit the diff to these files or directories.",
+        }),
+      ),
+      unified: Type.Optional(
+        Type.Number({
+          description: "Number of context lines around each hunk (default: 3). Equivalent to -U<n>.",
+        }),
+      ),
+      nameOnly: Type.Optional(
+        Type.Boolean({
+          description: "Show only file names that changed, not the full diff.",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["diff"]
+      if (params.staged) args.push("--staged")
+      if (params.nameOnly) args.push("--name-only")
+      if (params.unified !== undefined) args.push(`-U${params.unified}`)
+      if (params.base) {
+        args.push(params.base)
+        if (params.target) args.push(params.target)
+      }
+      if (params.paths && params.paths.length > 0) args.push("--", ...params.paths)
+      return runGit(args, ctx.cwd, signal, onUpdate)
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.staged) flags.push("--staged")
+      if (args.nameOnly) flags.push("--name-only")
+      if (args.unified !== undefined) flags.push(`-U${args.unified}`)
+
+      let text = theme.fg("toolTitle", theme.bold("git diff"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+      if (args.base) {
+        text += theme.fg("accent", " " + args.base)
+        if (args.target) text += theme.fg("dim", "...") + theme.fg("accent", args.target)
+      }
+      if (args.paths && args.paths.length > 0)
+        text += theme.fg("dim", " -- ") + theme.fg("accent", args.paths.join(" "))
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) return renderGitResult(result, expanded, isPartial, theme, "diffing…")
+
+      const details = result.details as GitDetails | undefined
+      const content = result.content[0]!
+      const raw = content.type === "text" ? (content as { type: string; text: string }).text : ""
+      const lines = raw.length > 0 ? raw.split("\n") : []
+      const failed = details?.exitCode !== 0 && details?.exitCode != null
+
+      if (failed) return renderGitResult(result, expanded, isPartial, theme)
+
+      if (lines.length === 0) return new Text(theme.fg("success", "✓ no differences"), 0, 0)
+
+      const visibleLines = expanded ? lines.length : 20
+      const visible = lines.slice(0, visibleLines)
+      const hidden = lines.length - visible.length
+
+      const styled = visible.map((l) => {
+        if (l.startsWith("+") && !l.startsWith("+++")) return theme.fg("toolDiffAdded", l)
+        if (l.startsWith("-") && !l.startsWith("---")) return theme.fg("toolDiffRemoved", l)
+        if (l.startsWith("@@")) return theme.fg("accent", l)
+        if (l.startsWith("diff ") || l.startsWith("index ") || l.startsWith("--- ") || l.startsWith("+++ "))
+          return theme.fg("muted", l)
+        return theme.fg("toolDiffContext", l)
+      })
+
+      let text = styled.join("\n")
+      if (hidden > 0)
+        text += "\n" + theme.fg("muted", `  (${hidden} more line${hidden !== 1 ? "s" : ""},  ctrl+o to expand)`)
+      return new Text(text, 0, 0)
+    },
+  })
+
+  // ── git_restore ────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_restore",
+    label: "git restore",
+    description: [
+      "Restore working tree files or unstage changes (git restore).",
+      "Only use when the user explicitly asks to discard changes or unstage files —",
+      "this is a destructive operation that can permanently lose uncommitted work.",
+      "Use staged=true to unstage files (remove from index, keep on disk).",
+      "Use source to restore content from a specific commit/branch (e.g. 'HEAD').",
+      "Use worktree=true (default when staged is not set) to restore working tree files.",
+      "Combine staged=true and worktree=true to unstage AND discard working tree changes.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      paths: Type.Array(Type.String(), {
+        description: "Files to restore. At least one path is required.",
+        minItems: 1,
+      }),
+      staged: Type.Optional(
+        Type.Boolean({
+          description:
+            "Unstage the files — restore the index from HEAD (or from source if given). " +
+            "Equivalent to git restore --staged.",
+        }),
+      ),
+      worktree: Type.Optional(
+        Type.Boolean({
+          description:
+            "Restore the working tree files (default behaviour when staged is not set). " +
+            "Pass true together with staged=true to unstage AND discard working tree changes.",
+        }),
+      ),
+      source: Type.Optional(
+        Type.String({
+          description:
+            "Restore content from this tree-ish (commit SHA, branch, tag, 'HEAD', etc.). " +
+            "Defaults to HEAD when --staged is used, or the index when only restoring the worktree.",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["restore"]
+      if (params.staged) args.push("--staged")
+      if (params.worktree) args.push("--worktree")
+      if (params.source) args.push("--source", params.source)
+      args.push("--", ...params.paths)
+      return runGit(args, ctx.cwd, signal, onUpdate)
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.staged) flags.push("--staged")
+      if (args.worktree) flags.push("--worktree")
+      if (args.source) flags.push(`--source=${args.source}`)
+
+      const paths = Array.isArray(args.paths) ? args.paths : [args.paths]
+      let text = theme.fg("toolTitle", theme.bold("git restore"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+      text += theme.fg("accent", " " + paths.join(" "))
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      return renderGitResult(result, expanded, isPartial, theme, "restoring…")
+    },
+  })
+
+  // ── git_log ──────────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_log",
+    label: "git log",
+    description: [
+      "Show commit history (git log).",
+      "Use maxCount to limit output. Use oneline=true for compact one-commit-per-line output.",
+      "Use graph=true to show a branch/merge graph alongside log entries.",
+      "Use range (e.g. 'main..HEAD') to restrict to a commit range.",
+      "Use paths to filter commits that touched specific files.",
+      "Use author/since/until to narrow by author or date.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      maxCount: Type.Optional(
+        Type.Number({
+          description: "Limit output to this many commits (-n / --max-count).",
+        }),
+      ),
+      oneline: Type.Optional(
+        Type.Boolean({
+          description: "Compact one-line-per-commit output (--oneline). Implies abbreviated SHA.",
+        }),
+      ),
+      graph: Type.Optional(
+        Type.Boolean({
+          description: "Draw a text-based graph of the branch and merge history (--graph).",
+        }),
+      ),
+      all: Type.Optional(
+        Type.Boolean({
+          description: "Include all refs (branches, tags, remotes) in the output (--all).",
+        }),
+      ),
+      range: Type.Optional(
+        Type.String({
+          description:
+            "Commit range to show, e.g. 'main..HEAD', 'HEAD~5', 'v1.0..v2.0'. " +
+            "Passed directly to git log as a positional argument.",
+        }),
+      ),
+      paths: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Limit to commits that touched these files or directories.",
+        }),
+      ),
+      author: Type.Optional(
+        Type.String({
+          description: "Filter commits by author name or email (substring match).",
+        }),
+      ),
+      since: Type.Optional(
+        Type.String({
+          description: 'Show commits more recent than this date (--since). E.g. "2 weeks ago", "2024-01-01".',
+        }),
+      ),
+      until: Type.Optional(
+        Type.String({
+          description: 'Show commits older than this date (--until). E.g. "yesterday", "2024-06-01".',
+        }),
+      ),
+      format: Type.Optional(
+        Type.String({
+          description:
+            "Custom pretty-print format string passed to --format=<fmt>. " +
+            "E.g. '%H %s' for full SHA + subject. Overrides oneline when both are set.",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["log"]
+      if (params.maxCount !== undefined) args.push(`--max-count=${params.maxCount}`)
+      if (params.all) args.push("--all")
+      if (params.graph) args.push("--graph")
+      if (params.author) args.push(`--author=${params.author}`)
+      if (params.since) args.push(`--since=${params.since}`)
+      if (params.until) args.push(`--until=${params.until}`)
+      if (params.format) {
+        args.push(`--format=${params.format}`)
+      } else if (params.oneline) {
+        args.push("--oneline")
+      }
+      if (params.range) args.push(params.range)
+      if (params.paths && params.paths.length > 0) args.push("--", ...params.paths)
+      return runGit(args, ctx.cwd, signal, onUpdate)
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.maxCount !== undefined) flags.push(`-n ${args.maxCount}`)
+      if (args.all) flags.push("--all")
+      if (args.graph) flags.push("--graph")
+      if (args.oneline && !args.format) flags.push("--oneline")
+      if (args.author) flags.push(`--author=${args.author}`)
+      if (args.since) flags.push(`--since=${args.since}`)
+      if (args.until) flags.push(`--until=${args.until}`)
+      if (args.format) flags.push(`--format='${args.format}'`)
+
+      let text = theme.fg("toolTitle", theme.bold("git log"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+      if (args.range) text += theme.fg("accent", " " + args.range)
+      if (args.paths && args.paths.length > 0)
+        text += theme.fg("dim", " -- ") + theme.fg("accent", args.paths.join(" "))
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) return renderGitResult(result, expanded, isPartial, theme, "loading log…")
+
+      const details = result.details as GitDetails | undefined
+      const content = result.content[0]!
+      const raw = content.type === "text" ? (content as { type: string; text: string }).text : ""
+      const lines = raw.length > 0 ? raw.split("\n") : []
+      const failed = details?.exitCode !== 0 && details?.exitCode != null
+
+      if (failed) return renderGitResult(result, expanded, isPartial, theme)
+      if (lines.length === 0) return new Text(theme.fg("success", "✓ no commits"), 0, 0)
+
+      const visibleLines = expanded ? lines.length : 20
+      const visible = lines.slice(0, visibleLines)
+      const hidden = lines.length - visible.length
+
+      // Colorize common log output patterns:
+      //   oneline:  "abc1234 subject line"
+      //   full:     "commit abc..."  /  "Author:"  /  "Date:"
+      //   graph:    lines starting with "*", "|", "/", "\"
+      const styled = visible.map((l) => {
+        if (/^[*|/\\\s]+/.exec(l) && /\*/.exec(l) && !/^commit/.exec(l)) {
+          // graph line — highlight the commit sha if present
+          return theme.fg("dim", l).replace(/\b([0-9a-f]{7,40})\b/, (sha: string) => theme.fg("accent", sha))
+        }
+        if (/^commit\s+[0-9a-f]{40}/.exec(l)) {
+          return theme.fg("warning", l)
+        }
+        if (/^(Author|Date|Merge):/.exec(l)) {
+          return theme.fg("muted", l)
+        }
+        // oneline format: leading short sha
+        const onelineMatch = /^([0-9a-f]{7,40}) (.*)$/.exec(l)
+        if (onelineMatch) {
+          return theme.fg("accent", onelineMatch[1]!) + " " + theme.fg("dim", onelineMatch[2]!)
+        }
+        return theme.fg("dim", l)
+      })
+
+      let text = styled.join("\n")
+      if (hidden > 0)
+        text += "\n" + theme.fg("muted", `  (${hidden} more line${hidden !== 1 ? "s" : ""},  ctrl+o to expand)`)
+      return new Text(text, 0, 0)
+    },
+  })
+
+  // ── git_push ──────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_push",
+    label: "git push",
+    description: [
+      "Push commits to a remote repository (git push).",
+      "Only use when the user explicitly asks to push.",
+      "Defaults to the tracking remote and branch when remote/branch are omitted.",
+      "Use setUpstream=true (-u) when pushing a new branch for the first time.",
+      "Use forceWithLease=true to force-push safely — fails if the remote has diverged unexpectedly.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      remote: Type.Optional(
+        Type.String({
+          description: "Remote name to push to (e.g. 'origin'). Defaults to the tracking remote.",
+        }),
+      ),
+      branch: Type.Optional(
+        Type.String({
+          description: "Branch to push (e.g. 'main'). Defaults to the current branch.",
+        }),
+      ),
+      setUpstream: Type.Optional(
+        Type.Boolean({
+          description:
+            "Set the upstream tracking reference for the branch (-u / --set-upstream). " +
+            "Use when pushing a new branch for the first time.",
+        }),
+      ),
+      forceWithLease: Type.Optional(
+        Type.Boolean({
+          description:
+            "Force-push only if the remote tip matches what was last fetched (--force-with-lease). " +
+            "Safer than --force — aborts if someone else pushed in the meantime.",
+        }),
+      ),
+      tags: Type.Optional(
+        Type.Boolean({
+          description: "Push all local tags to the remote (--tags).",
+        }),
+      ),
+      dryRun: Type.Optional(
+        Type.Boolean({
+          description: "Show what would be pushed without actually pushing (--dry-run).",
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["push"]
+      if (params.setUpstream) args.push("--set-upstream")
+      if (params.forceWithLease) args.push("--force-with-lease")
+      if (params.tags) args.push("--tags")
+      if (params.dryRun) args.push("--dry-run")
+      if (params.remote) args.push(params.remote)
+      if (params.branch) args.push(params.branch)
+      const result = await runGit(args, ctx.cwd, signal, onUpdate)
+      return appendResultNote(
+        result,
+        "Do not push automatically. This was a one-time approval — ask the user before pushing again.",
+      )
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.setUpstream) flags.push("-u")
+      if (args.forceWithLease) flags.push("--force-with-lease")
+      if (args.tags) flags.push("--tags")
+      if (args.dryRun) flags.push("--dry-run")
+
+      let text = theme.fg("toolTitle", theme.bold("git push"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+      if (args.remote) text += theme.fg("accent", " " + args.remote)
+      if (args.branch) text += theme.fg("accent", " " + args.branch)
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      return renderGitResult(result, expanded, isPartial, theme, "pushing…")
+    },
+  })
+
+  // ── git_commit ─────────────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "git_commit",
+    label: "git commit",
+    description: [
+      "Record staged changes as a new commit (git commit).",
+      "Only use when the user explicitly asks to commit — do not commit automatically after edits.",
+      "A commit message is required unless amend+noEdit is used.",
+      "Use all=true to automatically stage modifications and deletions to tracked files (-a).",
+      "Use amend=true to rewrite the most recent commit.",
+    ].join(" "),
+
+    parameters: Type.Object({
+      message: Type.Optional(
+        Type.String({
+          description:
+            "Commit message (-m). Required for new commits. " +
+            "Can be omitted when using amend+noEdit to keep the existing message.",
+        }),
+      ),
+      all: Type.Optional(
+        Type.Boolean({
+          description:
+            "Automatically stage modifications and deletions to already-tracked files before committing (-a). " +
+            "Does not stage untracked new files.",
+        }),
+      ),
+      amend: Type.Optional(
+        Type.Boolean({
+          description:
+            "Replace the tip of the current branch by creating a new commit (--amend). " +
+            "Rewrites the most recent commit.",
+        }),
+      ),
+      noEdit: Type.Optional(
+        Type.Boolean({
+          description:
+            "When amending, reuse the existing commit message without opening an editor (--no-edit). " +
+            "Only meaningful with amend=true.",
+        }),
+      ),
+      noVerify: Type.Optional(
+        Type.Boolean({
+          description: "Bypass pre-commit and commit-msg hooks (--no-verify). Use with care.",
+        }),
+      ),
+      allowEmpty: Type.Optional(
+        Type.Boolean({
+          description:
+            "Allow creating a commit with no changes (--allow-empty). " +
+            "Normally git refuses to record a commit that has no diff.",
+        }),
+      ),
+      author: Type.Optional(
+        Type.String({
+          description:
+            'Override the commit author (--author). Format: "Name <email>" ' +
+            'or a short-form like "Name <>" that git resolves from history.',
+        }),
+      ),
+      date: Type.Optional(
+        Type.String({
+          description:
+            "Override the author date (--date). Accepts any format git understands, " +
+            'e.g. "2024-06-01T12:00:00" or "now".',
+        }),
+      ),
+    }),
+
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const args: string[] = ["commit"]
+
+      if (params.all) args.push("--all")
+      if (params.amend) args.push("--amend")
+      if (params.noEdit) args.push("--no-edit")
+      if (params.noVerify) args.push("--no-verify")
+      if (params.allowEmpty) args.push("--allow-empty")
+      if (params.author) args.push("--author", params.author)
+      if (params.date) args.push("--date", params.date)
+      if (params.message) args.push("--message", params.message)
+
+      const result = await runGit(args, ctx.cwd, signal, onUpdate)
+      return appendResultNote(
+        result,
+        "Do not commit automatically. This was a one-time approval — ask the user before committing again.",
+      )
+    },
+
+    renderCall(args, theme) {
+      const flags: string[] = []
+      if (args.all) flags.push("-a")
+      if (args.amend) flags.push("--amend")
+      if (args.noEdit) flags.push("--no-edit")
+      if (args.noVerify) flags.push("--no-verify")
+      if (args.allowEmpty) flags.push("--allow-empty")
+      if (args.author) flags.push(`--author='${args.author}'`)
+      if (args.date) flags.push(`--date='${args.date}'`)
+
+      let text = theme.fg("toolTitle", theme.bold("git commit"))
+      if (flags.length > 0) text += theme.fg("dim", " " + flags.join(" "))
+
+      if (args.message) {
+        // Render each line of the commit message indented below the header.
+        // A conventional commit message may have a subject, a blank line,
+        // and a body — preserve that structure visually.
+        const msgLines = args.message.split("\n")
+        for (const [i, line] of msgLines.entries()) {
+          const isSubject = i === 0
+          text += "\n" + theme.fg("dim", "  ") + theme.fg(isSubject ? "accent" : "dim", line)
+        }
+      }
+
+      return new Text(text, 0, 0)
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) {
+        return renderGitResult(result, expanded, isPartial, theme, "committing…")
+      }
+
+      const details = result.details as GitDetails | undefined
+      const content = result.content[0]!
+      const raw = content.type === "text" ? (content as { type: string; text: string }).text : ""
+      const lines = raw.length > 0 ? raw.split("\n") : []
+      const totalLines = lines.length
+      const failed = details?.exitCode !== 0 && details?.exitCode != null
+
+      if (failed) {
+        let text = theme.fg("error", `✗ exit ${details.exitCode}`)
+        const visible = lines.slice(0, 20)
+        if (visible.length > 0) {
+          text += "\n" + visible.map((l) => theme.fg("dim", l)).join("\n")
+          const hidden = totalLines - visible.length
+          if (hidden > 0) {
+            text += "\n" + theme.fg("muted", `  (${hidden} more lines,  ctrl+o to expand)`)
+          }
+        }
+        return new Text(text, 0, 0)
+      }
+
+      // Parse git commit output for the sha + subject line
+      // Typical output: "[main 1a2b3c4] commit message\n 1 file changed, …"
+      const header = lines.find((l) => /^\[.+\s[0-9a-f]+\]/.exec(l))
+      const stats = lines.filter((l) => /\d+ (file|insertion|deletion)/.exec(l))
+
+      let text = theme.fg("success", "✓ committed")
+
+      if (header) {
+        // Highlight the sha portion inside [branch sha]
+        const styled = header.replace(
+          /\[([^\s]+)\s([0-9a-f]+)\]/,
+          (_m: string, branch: string, sha: string) =>
+            theme.fg("dim", "[") +
+            theme.fg("warning", branch) +
+            theme.fg("dim", " ") +
+            theme.fg("accent", sha) +
+            theme.fg("dim", "]"),
+        )
+        text += "  " + styled
+      }
+
+      if (stats.length > 0 && (expanded || !header)) {
+        text += "\n" + stats.map((l) => theme.fg("dim", l)).join("\n")
+      } else if (stats.length > 0) {
+        text += theme.fg("muted", "  " + stats[0]!.trim())
+      }
+
+      if (expanded && lines.length > 0) {
+        text += "\n" + lines.map((l) => theme.fg("dim", l)).join("\n")
+      }
+
+      return new Text(text, 0, 0)
+    },
+  })
+}

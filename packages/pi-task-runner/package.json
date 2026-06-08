@@ -1,21 +1,35 @@
 {
-  "name": "pi-extensions",
+  "name": "pi-task-runner",
   "version": "0.1.0",
-  "description": "Pi extensions: bfs, ripgrep, git, task-runner, context-preloader, pfs.",
-  "private": true,
+  "description": "Pi extension: safer, structured replacement for the bash tool with permission rules.",
   "type": "module",
   "license": "MIT",
   "engines": {
     "node": ">=22 <25"
   },
-  "packageManager": "pnpm@10.33.4",
+  "files": [
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extensions/task-runner.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "dependencies": {
+    "pi-extension-utils": "workspace:*",
+    "minimist": "*"
+  },
   "scripts": {
-    "typecheck": "pnpm -r run typecheck",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "test": "pnpm -r run test",
-    "check": "pnpm run typecheck && pnpm run format:check && pnpm run lint && pnpm run test"
+    "test": "vitest run"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",

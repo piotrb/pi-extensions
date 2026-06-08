@@ -6,10 +6,6 @@ settings:
 
 importers:
   .:
-    dependencies:
-      minimist:
-        specifier: ^1.2.8
-        version: 1.2.8
     devDependencies:
       "@earendil-works/pi-coding-agent":
         specifier: "*"
@@ -17,6 +13,274 @@ importers:
       "@earendil-works/pi-tui":
         specifier: "*"
         version: 0.75.4
+      "@types/minimist":
+        specifier: ^1.2.5
+        version: 1.2.5
+      "@types/node":
+        specifier: ^22
+        version: 22.19.19
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4(jiti@2.7.0)
+      eslint-config-prettier:
+        specifier: ^9.0.0
+        version: 9.1.2(eslint@9.39.4(jiti@2.7.0))
+      eslint-plugin-simple-import-sort:
+        specifier: ^12.0.0
+        version: 12.1.1(eslint@9.39.4(jiti@2.7.0))
+      prettier:
+        specifier: ^3.0.0
+        version: 3.8.3
+      typebox:
+        specifier: ^1.1.38
+        version: 1.1.38
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.0.0
+        version: 8.59.4(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+      vitest:
+        specifier: ^4.1.7
+        version: 4.1.7(@types/node@22.19.19)(vite@8.0.14(@types/node@22.19.19)(jiti@2.7.0)(yaml@2.9.0))
+
+  packages/pi-bfs:
+    dependencies:
+      pi-extension-utils:
+        specifier: workspace:*
+        version: link:../pi-extension-utils
+    devDependencies:
+      "@earendil-works/pi-coding-agent":
+        specifier: "*"
+        version: 0.75.4(ws@8.21.0)(zod@4.4.3)
+      "@earendil-works/pi-tui":
+        specifier: "*"
+        version: 0.75.4
+      "@types/node":
+        specifier: ^22
+        version: 22.19.19
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4(jiti@2.7.0)
+      eslint-config-prettier:
+        specifier: ^9.0.0
+        version: 9.1.2(eslint@9.39.4(jiti@2.7.0))
+      eslint-plugin-simple-import-sort:
+        specifier: ^12.0.0
+        version: 12.1.1(eslint@9.39.4(jiti@2.7.0))
+      prettier:
+        specifier: ^3.0.0
+        version: 3.8.3
+      typebox:
+        specifier: ^1.1.38
+        version: 1.1.38
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.0.0
+        version: 8.59.4(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+      vitest:
+        specifier: ^4.1.7
+        version: 4.1.7(@types/node@22.19.19)(vite@8.0.14(@types/node@22.19.19)(jiti@2.7.0)(yaml@2.9.0))
+
+  packages/pi-context-preloader:
+    devDependencies:
+      "@earendil-works/pi-coding-agent":
+        specifier: "*"
+        version: 0.75.4(ws@8.21.0)(zod@4.4.3)
+      "@types/node":
+        specifier: ^22
+        version: 22.19.19
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4(jiti@2.7.0)
+      eslint-config-prettier:
+        specifier: ^9.0.0
+        version: 9.1.2(eslint@9.39.4(jiti@2.7.0))
+      eslint-plugin-simple-import-sort:
+        specifier: ^12.0.0
+        version: 12.1.1(eslint@9.39.4(jiti@2.7.0))
+      prettier:
+        specifier: ^3.0.0
+        version: 3.8.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.0.0
+        version: 8.59.4(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+      vitest:
+        specifier: ^4.1.7
+        version: 4.1.7(@types/node@22.19.19)(vite@8.0.14(@types/node@22.19.19)(jiti@2.7.0)(yaml@2.9.0))
+
+  packages/pi-extension-utils:
+    devDependencies:
+      "@earendil-works/pi-coding-agent":
+        specifier: "*"
+        version: 0.75.4(ws@8.21.0)(zod@4.4.3)
+      "@earendil-works/pi-tui":
+        specifier: "*"
+        version: 0.75.4
+      "@types/node":
+        specifier: ^22
+        version: 22.19.19
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4(jiti@2.7.0)
+      eslint-config-prettier:
+        specifier: ^9.0.0
+        version: 9.1.2(eslint@9.39.4(jiti@2.7.0))
+      eslint-plugin-simple-import-sort:
+        specifier: ^12.0.0
+        version: 12.1.1(eslint@9.39.4(jiti@2.7.0))
+      prettier:
+        specifier: ^3.0.0
+        version: 3.8.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.0.0
+        version: 8.59.4(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+      vitest:
+        specifier: ^4.1.7
+        version: 4.1.7(@types/node@22.19.19)(vite@8.0.14(@types/node@22.19.19)(jiti@2.7.0)(yaml@2.9.0))
+
+  packages/pi-git:
+    dependencies:
+      pi-extension-utils:
+        specifier: workspace:*
+        version: link:../pi-extension-utils
+    devDependencies:
+      "@earendil-works/pi-coding-agent":
+        specifier: "*"
+        version: 0.75.4(ws@8.21.0)(zod@4.4.3)
+      "@earendil-works/pi-tui":
+        specifier: "*"
+        version: 0.75.4
+      "@types/node":
+        specifier: ^22
+        version: 22.19.19
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4(jiti@2.7.0)
+      eslint-config-prettier:
+        specifier: ^9.0.0
+        version: 9.1.2(eslint@9.39.4(jiti@2.7.0))
+      eslint-plugin-simple-import-sort:
+        specifier: ^12.0.0
+        version: 12.1.1(eslint@9.39.4(jiti@2.7.0))
+      prettier:
+        specifier: ^3.0.0
+        version: 3.8.3
+      typebox:
+        specifier: ^1.1.38
+        version: 1.1.38
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.0.0
+        version: 8.59.4(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+      vitest:
+        specifier: ^4.1.7
+        version: 4.1.7(@types/node@22.19.19)(vite@8.0.14(@types/node@22.19.19)(jiti@2.7.0)(yaml@2.9.0))
+
+  packages/pi-pfs:
+    devDependencies:
+      "@earendil-works/pi-coding-agent":
+        specifier: "*"
+        version: 0.75.4(ws@8.21.0)(zod@4.4.3)
+      "@earendil-works/pi-tui":
+        specifier: "*"
+        version: 0.75.4
+      "@types/node":
+        specifier: ^22
+        version: 22.19.19
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4(jiti@2.7.0)
+      eslint-config-prettier:
+        specifier: ^9.0.0
+        version: 9.1.2(eslint@9.39.4(jiti@2.7.0))
+      eslint-plugin-simple-import-sort:
+        specifier: ^12.0.0
+        version: 12.1.1(eslint@9.39.4(jiti@2.7.0))
+      prettier:
+        specifier: ^3.0.0
+        version: 3.8.3
+      typebox:
+        specifier: ^1.1.38
+        version: 1.1.38
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.0.0
+        version: 8.59.4(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+      vitest:
+        specifier: ^4.1.7
+        version: 4.1.7(@types/node@22.19.19)(vite@8.0.14(@types/node@22.19.19)(jiti@2.7.0)(yaml@2.9.0))
+
+  packages/pi-ripgrep:
+    dependencies:
+      pi-extension-utils:
+        specifier: workspace:*
+        version: link:../pi-extension-utils
+    devDependencies:
+      "@earendil-works/pi-coding-agent":
+        specifier: "*"
+        version: 0.75.4(ws@8.21.0)(zod@4.4.3)
+      "@earendil-works/pi-tui":
+        specifier: "*"
+        version: 0.75.4
+      "@types/node":
+        specifier: ^22
+        version: 22.19.19
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.4(jiti@2.7.0)
+      eslint-config-prettier:
+        specifier: ^9.0.0
+        version: 9.1.2(eslint@9.39.4(jiti@2.7.0))
+      eslint-plugin-simple-import-sort:
+        specifier: ^12.0.0
+        version: 12.1.1(eslint@9.39.4(jiti@2.7.0))
+      prettier:
+        specifier: ^3.0.0
+        version: 3.8.3
+      typebox:
+        specifier: ^1.1.38
+        version: 1.1.38
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.0.0
+        version: 8.59.4(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+      vitest:
+        specifier: ^4.1.7
+        version: 4.1.7(@types/node@22.19.19)(vite@8.0.14(@types/node@22.19.19)(jiti@2.7.0)(yaml@2.9.0))
+
+  packages/pi-task-runner:
+    dependencies:
+      minimist:
+        specifier: "*"
+        version: 1.2.8
+      pi-extension-utils:
+        specifier: workspace:*
+        version: link:../pi-extension-utils
+    devDependencies:
+      "@earendil-works/pi-coding-agent":
+        specifier: "*"
+        version: 0.75.4(ws@8.21.0)(zod@4.4.3)
+      "@earendil-works/pi-tui":
+        specifier: "*"
+        version: 0.75.4
+      "@types/minimist":
+        specifier: ^1.2.5
+        version: 1.2.5
       "@types/node":
         specifier: ^22
         version: 22.19.19
@@ -632,6 +896,10 @@ packages:
   "@types/json-schema@7.0.15":
     resolution:
       { integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA== }
+
+  "@types/minimist@1.2.5":
+    resolution:
+      { integrity: sha512-hov8bUuiLiyFPGyFPE1lwWhmzYbirOXQNNo40+y3zow8aFVTeyn3VWL0VFFfdNddA8S4Vf0Tc062rzyNr7Paag== }
 
   "@types/node@22.19.19":
     resolution:
@@ -2358,6 +2626,8 @@ snapshots:
   "@types/estree@1.0.9": {}
 
   "@types/json-schema@7.0.15": {}
+
+  "@types/minimist@1.2.5": {}
 
   "@types/node@22.19.19":
     dependencies:
