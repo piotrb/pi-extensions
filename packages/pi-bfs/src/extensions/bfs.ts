@@ -14,7 +14,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { Text } from "@earendil-works/pi-tui"
-import { spawnStreaming } from "pi-extension-utils"
+import { spawnStreaming } from "@piotrb/pi-extension-utils"
 import { Type } from "typebox"
 
 const DEFAULT_VISIBLE_LINES = 30

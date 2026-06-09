@@ -65,24 +65,45 @@ Test file block (applied to `**/*.test.ts`): also disables `no-unsafe-assignment
 
 Run with `--max-warnings=0` so warnings fail CI.
 
+**Caching:** the root `lint` script uses `--cache --cache-location .eslintcache/`. Repeat invocations on unchanged files complete in ~1.5s vs ~45s on a cold first run. Cache is auto-invalidated on `eslint.config.mjs` changes. The `.eslintcache/` directory is git-ignored. **Above that, Turbo caches the entire `//#lint` and `//#format:check` task outputs by file fingerprint** — see `turbo.json`. On a clean second `pnpm run check`, all 16 tasks replay from cache in ~3s.
+
+**Performance debugging:** set `TIMING=1` in the env to get a top-10 rule-by-rule time report (e.g. `run(cmd: ["pnpm", "run", "lint"], env: { TIMING: "1" })`). First-run time is dominated by the type-checked rules (`no-unsafe-assignment`, `no-unsafe-return`, `no-floating-promises`, `no-base-to-string`) — these can't be loosened without losing real safety.
+
+### Turbo task graph (`turbo.json`)
+
+Single source of truth for the four developer-facing tasks:
+
+| Task in `turbo.json` | Runs in     | Command source                               |
+| -------------------- | ----------- | -------------------------------------------- |
+| `//#format:check`    | root once   | root `package.json` → `format:check`         |
+| `//#lint`            | root once   | root `package.json` → `lint`                 |
+| `typecheck`          | per-package | each `packages/*/package.json` → `typecheck` |
+| `test`               | per-package | each `packages/*/package.json` → `test`      |
+
+The `//` prefix marks a **root task** — runs once at the repo root, not per package. The `#` separates the package identifier from the script name. `//` resolves to "the root package itself"; no-prefix resolves to "every workspace package that has a matching script".
+
+**Commands live in `package.json`**, not `turbo.json`. To change a command, edit the script in the relevant `package.json`; `turbo.json` is unaffected. `turbo.json` only declares task name, cache config, and inputs (what files, if changed, invalidate the cache).
+
+**Per-package scripts** are intentionally minimal: only `typecheck` and `test` survive in each `packages/*/package.json`. `format`/`format:check`/`lint` are root-only and don't need per-package duplicates.
+
+**Single-package check:** `pnpm turbo run typecheck test --filter=<pkg>`. Format+lint still need the full `pnpm run check` because they're root-globbed.
+
 ### Script naming conventions
 
-| Script         | What it does                                                 |
-| -------------- | ------------------------------------------------------------ |
-| `typecheck`    | `tsc --noEmit`                                               |
-| `lint`         | `eslint . --max-warnings=0`                                  |
-| `format:check` | `prettier --check .` (readonly)                              |
-| `format`       | `prettier --write .` (writes)                                |
-| `test`         | `vitest run`                                                 |
-| `check`        | `typecheck && format:check && lint && test` (root aggregate) |
+| Script         | What it does                                              |
+| -------------- | --------------------------------------------------------- |
+| `typecheck`    | root: `pnpm turbo typecheck`; per-package: `tsc --noEmit` |
+| `lint`         | root: `eslint . --max-warnings=0 --cache ...` (root only) |
+| `format:check` | root: `prettier --check .` (root only)                    |
+| `format`       | root: `prettier --write .` (root only)                    |
+| `test`         | root: `pnpm turbo test`; per-package: `vitest run`        |
+| `check`        | root: `pnpm turbo //#format:check //#lint typecheck test` |
 
-Root `lint` runs `eslint . --max-warnings=0` directly — one process for the whole workspace, not `pnpm -r`. Per-package `lint` scripts still exist for scoped use.
-
-`check` order: typecheck first (most severe), then format, lint, tests.
+`check` is the canonical "run everything" command. It invokes all four Turbo tasks; the first two are root-level singletons, the latter two fan out per package. Cache hits make subsequent runs near-instant.
 
 ## Notes
 
-- Run `pnpm run check` after **every** edit. Don't batch.
+- Run the relevant check after **every** edit. Don't batch. The default `run` tool timeout (30s) is shorter than a full workspace check, so for single-package edits run the scoped Turbo filter (typically under 30s): `run(cmd: ["pnpm", "turbo", "run", "typecheck", "test", "--filter", "<pkg>"])`. Use the full `pnpm run check` periodically (or before commit) to catch cross-package format/lint issues — it can exceed 30s on a cold cache, so prefer the scoped approach during iteration.
 - `while (true)` loops trigger `@typescript-eslint/no-unnecessary-condition` — suppress with `// eslint-disable-next-line`.
 - `async` handlers that don't `await` trigger `require-await` — suppress with a disable comment rather than adding a spurious `await`.
 - Regex replace callbacks have `any`-typed capture params — annotate them: `(_m: string, branch: string, sha: string) =>`.

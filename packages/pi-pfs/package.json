@@ -1,9 +1,21 @@
 {
-  "name": "pi-pfs",
+  "name": "@piotrb/pi-pfs",
   "version": "0.1.0",
   "description": "Pi extension: project filesystem tools for basic file operations.",
   "type": "module",
   "license": "MIT",
+  "author": "Piotr Banasik",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/piotrb/pi-extensions.git"
+  },
+  "bugs": {
+    "url": "https://github.com/piotrb/pi-extensions/issues"
+  },
+  "homepage": "https://github.com/piotrb/pi-extensions#readme",
   "engines": {
     "node": ">=22 <25"
   },
@@ -17,6 +29,12 @@
       "./src/extensions/pfs.ts"
     ]
   },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "pi-pfs"
+  ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
@@ -24,7 +42,6 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --max-warnings=0",
     "test": "vitest run"
   },
   "devDependencies": {

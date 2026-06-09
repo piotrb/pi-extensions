@@ -24,11 +24,10 @@
     "typebox": "*"
   },
   "dependencies": {
-    "pi-extension-utils": "workspace:*"
+    "@piotrb/pi-extension-utils": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --max-warnings=0",
     "test": "vitest run"
   },
   "devDependencies": {

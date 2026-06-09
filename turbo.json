@@ -1,0 +1,32 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "tasks": {
+    "//#format:check": {
+      "cache": true,
+      "inputs": [
+        "**/*.{ts,js,mjs,cjs,jsx,tsx,json,md,yml,yaml}",
+        ".prettierignore",
+        "prettier.config.*",
+        ".prettierrc*"
+      ]
+    },
+    "//#lint": {
+      "cache": true,
+      "inputs": ["**/*.{ts,js,mjs,cjs,jsx,tsx}", "eslint.config.*", "eslint.config.mjs", ".eslintignore"]
+    },
+    "typecheck": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": ["src/**", "tsconfig.json", "package.json", "../../tsconfig.base.json"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": ["src/**", "vitest.config.*", "package.json", "tsconfig.json"],
+      "outputs": []
+    }
+  },
+  "globalDependencies": ["pnpm-lock.yaml", "tsconfig.base.json", ".tool-versions", "package.json"]
+}

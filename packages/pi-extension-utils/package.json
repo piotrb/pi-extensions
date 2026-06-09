@@ -1,9 +1,21 @@
 {
-  "name": "pi-extension-utils",
+  "name": "@piotrb/pi-extension-utils",
   "version": "0.1.0",
   "description": "Shared utilities for pi extensions — spawnStreaming, progressiveKill, scheduleProcessTimeout.",
   "type": "module",
   "license": "MIT",
+  "author": "Piotr Banasik",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/piotrb/pi-extensions.git"
+  },
+  "bugs": {
+    "url": "https://github.com/piotrb/pi-extensions/issues"
+  },
+  "homepage": "https://github.com/piotrb/pi-extensions#readme",
   "engines": {
     "node": ">=22 <25"
   },
@@ -17,9 +29,11 @@
     "!src/**/*.test.ts",
     "README.md"
   ],
+  "keywords": [
+    "pi-extension-utils"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --max-warnings=0",
     "test": "vitest run"
   },
   "devDependencies": {

@@ -5,6 +5,11 @@
     "pnpm -r run *": "allow",
     "pnpm --filter * run *": "allow",
     "pnpm add *": "allow",
-    "pnpm remove *": "allow"
+    "pnpm remove *": "allow",
+    "pnpm --version": "allow",
+    "pnpm turbo *": "allow",
+    "pnpm run changeset": "deny",
+    "pnpm run version": "deny",
+    "pnpm run release": "deny"
   }
 }

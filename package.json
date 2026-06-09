@@ -10,14 +10,19 @@
   },
   "packageManager": "pnpm@10.33.4",
   "scripts": {
-    "typecheck": "pnpm -r run typecheck",
-    "lint": "eslint . --max-warnings=0",
+    "changeset": "pnpm changeset",
+    "version": "pnpm changeset version",
+    "release": "pnpm changeset publish",
+    "typecheck": "pnpm turbo typecheck",
+    "lint": "eslint . --max-warnings=0 --cache --cache-location .eslintcache/",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "pnpm -r run test",
-    "check": "pnpm run typecheck && pnpm run format:check && pnpm run lint && pnpm run test"
+    "test": "pnpm turbo test",
+    "check": "pnpm turbo //#format:check //#lint typecheck test"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.5.0",
+    "@changesets/cli": "^2.27.0",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "@types/minimist": "^1.2.5",
@@ -26,6 +31,7 @@
     "eslint-config-prettier": "^9.0.0",
     "eslint-plugin-simple-import-sort": "^12.0.0",
     "prettier": "^3.0.0",
+    "turbo": "^2.9.0",
     "typebox": "^1.1.38",
     "typescript": "5.9.3",
     "typescript-eslint": "^8.0.0",

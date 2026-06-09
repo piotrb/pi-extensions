@@ -19,6 +19,21 @@ export default tseslint.config(
       "simple-import-sort/imports": "error",
       "simple-import-sort/exports": "error",
       "@typescript-eslint/restrict-template-expressions": ["error", { allowNumber: true }],
+      // Loosened from strict-type-checked defaults to recommended-type-checked — removes this rule
+      // from the lint top-10. Other type-checked rules (no-unsafe-*, no-base-to-string) dominate
+      // first-run lint time and can't be relaxed without losing real safety; the eslint cache
+      // (`--cache --cache-location .eslintcache/`) keeps repeat invocations fast (~1.5s).
+      "@typescript-eslint/restrict-plus-operands": [
+        "error",
+        {
+          allowAny: true,
+          allowBoolean: true,
+          allowNullish: true,
+          allowRegExp: true,
+          allowNumberAndString: true,
+          skipCompoundAssignments: true,
+        },
+      ],
       "@typescript-eslint/no-unused-vars": [
         "error",
         {
