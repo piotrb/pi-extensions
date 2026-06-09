@@ -26,6 +26,7 @@
 
     "git_status": "allow",
     "git_diff": "allow",
+    "git_log": "allow",
     "git_mv": "ask",
     "git_commit": "ask",
 
