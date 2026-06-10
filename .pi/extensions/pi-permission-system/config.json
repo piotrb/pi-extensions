@@ -21,6 +21,8 @@
     "Agent": "allow",
     "todo": "allow",
 
+    "get_subagent_result": "allow",
+
     "pfs_mv": "allow",
     "pfs_cp": "allow",
 
@@ -32,10 +34,12 @@
 
     "edit": {
       ".pi/*": "ask",
+      "packages/*": "allow",
       "*package.json": "ask"
     },
     "write": {
       ".pi/*": "ask",
+      "packages/*": "allow",
       "*package.json": "ask"
     },
 
