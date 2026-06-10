@@ -55,6 +55,7 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "@types/node": "^22",
+    "@types/picomatch": "^4.0.3",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^9.0.0",
     "eslint-plugin-simple-import-sort": "^12.0.0",

@@ -123,13 +123,13 @@ export function scheduleProcessTimeout(ms: number, child: ChildProcess, onTimeou
  *   "* --version" → ^[\s\S]* --version$ (leading wildcard)
  */
 export function genericPatternToRegex(pattern: string): RegExp {
-	const escLit = (s: string) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
-	if (pattern === "*") return /^[\s\S]*$/
-	const parts = pattern.split("*")
-	if (parts.length === 1) return new RegExp("^" + escLit(pattern) + "$")
-	// Each * becomes [\s\S]*; no word-boundary on trailing ' *'.
-	const segments = parts.map((seg, i) => (i === parts.length - 1 ? escLit(seg) : escLit(seg) + "[\\s\\S]*"))
-	return new RegExp("^" + segments.join("") + "$")
+  const escLit = (s: string) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+  if (pattern === "*") return /^[\s\S]*$/
+  const parts = pattern.split("*")
+  if (parts.length === 1) return new RegExp("^" + escLit(pattern) + "$")
+  // Each * becomes [\s\S]*; no word-boundary on trailing ' *'.
+  const segments = parts.map((seg, i) => (i === parts.length - 1 ? escLit(seg) : escLit(seg) + "[\\s\\S]*"))
+  return new RegExp("^" + segments.join("") + "$")
 }
 
 /**
@@ -147,28 +147,28 @@ export function genericPatternToRegex(pattern: string): RegExp {
  * not change this function without updating the runner's tests in lockstep.
  */
 export function bashPatternToRegex(pattern: string): RegExp {
-	const escLit = (s: string) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
-	const p = pattern.endsWith(":*") ? pattern.slice(0, -2) + " *" : pattern
-	if (p === "*") return /^[\s\S]*$/
-	const parts = p.split("*")
-	if (parts.length === 1) return new RegExp("^" + escLit(p) + "$")
-	const isTrailingSpaceStar = p.endsWith(" *")
-	if (isTrailingSpaceStar && parts.length === 2) {
-		const prefix = p.slice(0, -2)
-		return new RegExp("^" + escLit(prefix) + "( [\\s\\S]*)?$")
-	}
-	const segments = parts.map((seg, i) => {
-		const escaped = escLit(seg)
-		const isLast = i === parts.length - 1
-		if (isLast) return escaped
-		const isSemiLast = i === parts.length - 2
-		if (isSemiLast && isTrailingSpaceStar) {
-			return escaped.replace(/ $/, "") + "( [\\s\\S]*)?$"
-		}
-		return escaped + "[\\s\\S]*"
-	})
-	const regexStr = isTrailingSpaceStar ? "^" + segments.slice(0, -1).join("") : "^" + segments.join("") + "$"
-	return new RegExp(regexStr)
+  const escLit = (s: string) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+  const p = pattern.endsWith(":*") ? pattern.slice(0, -2) + " *" : pattern
+  if (p === "*") return /^[\s\S]*$/
+  const parts = p.split("*")
+  if (parts.length === 1) return new RegExp("^" + escLit(p) + "$")
+  const isTrailingSpaceStar = p.endsWith(" *")
+  if (isTrailingSpaceStar && parts.length === 2) {
+    const prefix = p.slice(0, -2)
+    return new RegExp("^" + escLit(prefix) + "( [\\s\\S]*)?$")
+  }
+  const segments = parts.map((seg, i) => {
+    const escaped = escLit(seg)
+    const isLast = i === parts.length - 1
+    if (isLast) return escaped
+    const isSemiLast = i === parts.length - 2
+    if (isSemiLast && isTrailingSpaceStar) {
+      return escaped.replace(/ $/, "") + "( [\\s\\S]*)?$"
+    }
+    return escaped + "[\\s\\S]*"
+  })
+  const regexStr = isTrailingSpaceStar ? "^" + segments.slice(0, -1).join("") : "^" + segments.join("") + "$"
+  return new RegExp(regexStr)
 }
 
 /**
@@ -177,8 +177,8 @@ export function bashPatternToRegex(pattern: string): RegExp {
  * packages/pi-task-runner/src/lib/permissions.ts:75-77.
  */
 export function specificity(pattern: string): number {
-	// eslint-disable-next-line @typescript-eslint/no-misused-spread
-	return [...pattern].filter((c) => c !== "*").length
+  // eslint-disable-next-line @typescript-eslint/no-misused-spread
+  return [...pattern].filter((c) => c !== "*").length
 }
 
 /**
@@ -190,17 +190,17 @@ export function specificity(pattern: string): number {
  * declared later in the config take precedence.
  */
 export function lastMatch<V>(
-	entries: Record<string, V>,
-	value: string,
-	regexOf: (pattern: string) => RegExp,
+  entries: Record<string, V>,
+  value: string,
+  regexOf: (pattern: string) => RegExp,
 ): { pattern: string; value: V } | undefined {
-	let result: { pattern: string; value: V } | undefined
-	for (const [pattern, v] of Object.entries(entries)) {
-		if (regexOf(pattern).test(value)) {
-			result = { pattern, value: v }
-		}
-	}
-	return result
+  let result: { pattern: string; value: V } | undefined
+  for (const [pattern, v] of Object.entries(entries)) {
+    if (regexOf(pattern).test(value)) {
+      result = { pattern, value: v }
+    }
+  }
+  return result
 }
 
 // ─── spawnStreaming ───────────────────────────────────────────────────────────────

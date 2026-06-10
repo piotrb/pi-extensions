@@ -1,15 +1,15 @@
-import { type ChildProcess } from "node:child_process"
+import type { ChildProcess } from "node:child_process"
 
 import { describe, expect, it } from "vitest"
 
 import {
-	bashPatternToRegex,
-	genericPatternToRegex,
-	lastMatch,
-	progressiveKill,
-	scheduleProcessTimeout,
-	specificity,
-	spawnStreaming,
+  bashPatternToRegex,
+  genericPatternToRegex,
+  lastMatch,
+  progressiveKill,
+  scheduleProcessTimeout,
+  spawnStreaming,
+  specificity,
 } from "./extension-utils.ts"
 
 // Minimal ChildProcess-compatible mock for unit tests

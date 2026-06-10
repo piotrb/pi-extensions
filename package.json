@@ -15,6 +15,7 @@
     "release": "pnpm changeset publish",
     "typecheck": "pnpm turbo typecheck",
     "lint": "eslint . --max-warnings=0 --cache --cache-location .eslintcache/",
+    "lint:fix": "eslint . --fix --cache --cache-location .eslintcache/",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "pnpm turbo test",
