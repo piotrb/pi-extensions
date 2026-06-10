@@ -13,6 +13,8 @@
  * Ties are broken by scope: project > user > global.
  */
 
+import { bashPatternToRegex, specificity } from "@piotrb/pi-extension-utils"
+
 // ─── types ────────────────────────────────────────────────────────────────────
 
 export type RuleLevel = "allow" | "ask" | "deny"
@@ -32,62 +34,6 @@ const SCOPE_PRIORITY: Record<RuleScope, number> = {
   global: 0,
 }
 
-// ─── patternToRegex ───────────────────────────────────────────────────────────
-
-/**
- * Compile a permission pattern string to a RegExp.
- */
-export function patternToRegex(pattern: string): RegExp {
-  const escLit = (s: string) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
-
-  // Normalise :* suffix → trailing ' *'
-  const p = pattern.endsWith(":*") ? pattern.slice(0, -2) + " *" : pattern
-
-  if (p === "*") return /^[\s\S]*$/
-
-  const parts = p.split("*")
-
-  if (parts.length === 1) {
-    return new RegExp("^" + escLit(p) + "$")
-  }
-
-  const isTrailingSpaceStar = p.endsWith(" *")
-
-  if (isTrailingSpaceStar && parts.length === 2) {
-    // Simple prefix wildcard: enforce word boundary after prefix
-    const prefix = p.slice(0, -2)
-    return new RegExp("^" + escLit(prefix) + "( [\\s\\S]*)?$")
-  }
-
-  // General case: each * becomes [\s\S]* (spans spaces and words).
-  // For a trailing ' *', apply the word-boundary treatment to the last wildcard.
-  const segments = parts.map((seg, i) => {
-    const escaped = escLit(seg)
-    const isLast = i === parts.length - 1
-    if (isLast) return escaped
-    const isSemiLast = i === parts.length - 2
-    if (isSemiLast && isTrailingSpaceStar) {
-      return escaped.replace(/ $/, "") + "( [\\s\\S]*)?$"
-    }
-    return escaped + "[\\s\\S]*"
-  })
-
-  const regexStr = isTrailingSpaceStar ? "^" + segments.slice(0, -1).join("") : "^" + segments.join("") + "$"
-
-  return new RegExp(regexStr)
-}
-
-// ─── specificity ──────────────────────────────────────────────────────────────
-
-/**
- * Count the non-wildcard characters in a pattern.
- * Higher = more specific.
- */
-export function specificity(pattern: string): number {
-  // eslint-disable-next-line @typescript-eslint/no-misused-spread
-  return [...pattern].filter((c) => c !== "*").length
-}
-
 // ─── checkRules ───────────────────────────────────────────────────────────────
 
 /**
@@ -104,7 +50,7 @@ export function checkRules(cmd: string[], rules: Rule[]): RuleLevel | "undecided
   let bestScopePriority = -1
 
   for (const rule of rules) {
-    if (!patternToRegex(rule.pattern).test(cmdStr)) continue
+    if (!bashPatternToRegex(rule.pattern).test(cmdStr)) continue
 
     const spec = specificity(rule.pattern)
     const scopePri = SCOPE_PRIORITY[rule.scope]

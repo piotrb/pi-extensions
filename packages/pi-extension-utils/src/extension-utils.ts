@@ -109,6 +109,100 @@ export function scheduleProcessTimeout(ms: number, child: ChildProcess, onTimeou
   return cancel
 }
 
+// ─── pattern matchers ───────────────────────────────────────────────────────────
+
+/**
+ * Compile a permission pattern string to a RegExp. Generic mode — no bash
+ * word-boundary on the trailing ` *`. Suitable for paths, URLs, and arbitrary
+ * string patterns.
+ *   "git *"     → ^git[\s\S]*$         (does NOT match bare "git")
+ *   "git"       → ^git$
+ *   "*.env"     → ^.+\.env$            (single-segment glob)
+ *   "*"         → [\s\S]*
+ *   "foo*bar"   → ^foo[\s\S]*bar$      (wildcard in the middle)
+ *   "* --version" → ^[\s\S]* --version$ (leading wildcard)
+ */
+export function genericPatternToRegex(pattern: string): RegExp {
+	const escLit = (s: string) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+	if (pattern === "*") return /^[\s\S]*$/
+	const parts = pattern.split("*")
+	if (parts.length === 1) return new RegExp("^" + escLit(pattern) + "$")
+	// Each * becomes [\s\S]*; no word-boundary on trailing ' *'.
+	const segments = parts.map((seg, i) => (i === parts.length - 1 ? escLit(seg) : escLit(seg) + "[\\s\\S]*"))
+	return new RegExp("^" + segments.join("") + "$")
+}
+
+/**
+ * Compile a permission pattern string to a RegExp. Bash mode — retains the
+ * runner's trailing-` *` word-boundary semantics. Suitable for command patterns.
+ *   "git *"     → ^git( [\s\S]*)?$    (matches "git" and "git foo")
+ *   "git:*"     → normalized to "git *" then above
+ *   "git"       → ^git$
+ *   "*"         → [\s\S]*
+ *   "git * main" → ^git [\s\S]*main$  (wildcard in the middle — no word-boundary)
+ *
+ * IMPORTANT: This function is byte-equivalent to the runner's pre-lift
+ * `patternToRegex` at packages/pi-task-runner/src/lib/permissions.ts:38-72.
+ * The runner's `permissions.test.ts:7-79` asserts these exact behaviors; do
+ * not change this function without updating the runner's tests in lockstep.
+ */
+export function bashPatternToRegex(pattern: string): RegExp {
+	const escLit = (s: string) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+	const p = pattern.endsWith(":*") ? pattern.slice(0, -2) + " *" : pattern
+	if (p === "*") return /^[\s\S]*$/
+	const parts = p.split("*")
+	if (parts.length === 1) return new RegExp("^" + escLit(p) + "$")
+	const isTrailingSpaceStar = p.endsWith(" *")
+	if (isTrailingSpaceStar && parts.length === 2) {
+		const prefix = p.slice(0, -2)
+		return new RegExp("^" + escLit(prefix) + "( [\\s\\S]*)?$")
+	}
+	const segments = parts.map((seg, i) => {
+		const escaped = escLit(seg)
+		const isLast = i === parts.length - 1
+		if (isLast) return escaped
+		const isSemiLast = i === parts.length - 2
+		if (isSemiLast && isTrailingSpaceStar) {
+			return escaped.replace(/ $/, "") + "( [\\s\\S]*)?$"
+		}
+		return escaped + "[\\s\\S]*"
+	})
+	const regexStr = isTrailingSpaceStar ? "^" + segments.slice(0, -1).join("") : "^" + segments.join("") + "$"
+	return new RegExp(regexStr)
+}
+
+/**
+ * Count the non-wildcard characters in a pattern. Higher = more specific.
+ * Byte-equivalent to the runner's pre-lift implementation at
+ * packages/pi-task-runner/src/lib/permissions.ts:75-77.
+ */
+export function specificity(pattern: string): number {
+	// eslint-disable-next-line @typescript-eslint/no-misused-spread
+	return [...pattern].filter((c) => c !== "*").length
+}
+
+/**
+ * Last-match-wins resolver. Given an ordered record of {pattern: V} entries
+ * and a value to test, returns the value V from the LAST matching pattern.
+ * Returns undefined when no pattern matches and no `*` fallback is set.
+ *
+ * Iteration order matches `Object.entries(entries)` insertion order — patterns
+ * declared later in the config take precedence.
+ */
+export function lastMatch<V>(
+	entries: Record<string, V>,
+	value: string,
+	regexOf: (pattern: string) => RegExp,
+): { pattern: string; value: V } | undefined {
+	let result: { pattern: string; value: V } | undefined
+	for (const [pattern, v] of Object.entries(entries)) {
+		if (regexOf(pattern).test(value)) {
+			result = { pattern, value: v }
+		}
+	}
+	return result
+}
+
 // ─── spawnStreaming ───────────────────────────────────────────────────────────────
 
 /**

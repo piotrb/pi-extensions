@@ -1,0 +1,67 @@
+{
+  "name": "@piotrb/pi-tool-policy",
+  "version": "0.1.0",
+  "description": "Pi extension: 4-layer permission policy (aspects, groupVerdicts, tools, externalDirectory) for tool_call gating.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Piotr Banasik",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/piotrb/pi-extensions.git"
+  },
+  "bugs": {
+    "url": "https://github.com/piotrb/pi-extensions/issues"
+  },
+  "homepage": "https://github.com/piotrb/pi-extensions#readme",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "files": [
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "README.md",
+    "schemas/**/*.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extensions/tool-policy.ts"
+    ]
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "pi-tool-policy",
+    "permissions",
+    "policy"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "dependencies": {
+    "@piotrb/pi-extension-utils": "workspace:*",
+    "picomatch": "^4.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "@types/node": "^22",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-simple-import-sort": "^12.0.0",
+    "prettier": "^3.0.0",
+    "typebox": "^1.1.38",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^4.1.7"
+  }
+}
