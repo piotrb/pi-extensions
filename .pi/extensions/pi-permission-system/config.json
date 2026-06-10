@@ -33,11 +33,17 @@
     "git_commit": "ask",
 
     "edit": {
+      "*": "allow",
+      "*.env.local": "deny",
+      "*.env.*.local": "deny",
       ".pi/*": "ask",
       "packages/*": "allow",
       "*package.json": "ask"
     },
     "write": {
+      "*": "allow",
+      "*.env.local": "deny",
+      "*.env.*.local": "deny",
       ".pi/*": "ask",
       "packages/*": "allow",
       "*package.json": "ask"
