@@ -176,8 +176,7 @@ describe("tool-policy extension does NOT read the legacy config paths", () => {
   // The check scans `src/lib/*.ts` only (excluding the test file itself
   // — its own comment would otherwise be flagged).
   it("contains no string 'runner.json' in src/lib/*.ts (excluding tests)", async () => {
-    const { readdir, stat } = await import("node:fs/promises")
-    const { readFile } = await import("node:fs/promises")
+    const { readdir, readFile, stat } = await import("node:fs/promises")
     const dir = join(import.meta.dirname)
     const entries = await readdir(dir)
     const hits: string[] = []
