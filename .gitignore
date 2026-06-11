@@ -1,5 +1,6 @@
 node_modules/
 .pi/pi-task-list/state.json
+.pi/*.log
 .changeset/pre.json
 .eslintcache/
 .turbo/

@@ -70,6 +70,27 @@ Each `packages/<name>/` is its own npm package with its own `package.json`, `tsc
 - **File operations**: prefer `pfs_mv`, `pfs_cp`, `pfs_unlink`, `pfs_rmdir` for filesystem moves/deletes. Use `git_mv` only when you explicitly need git to track the rename in the index.
 - **Skills**: any change to `.ai/*.md` MUST update the Skills section below in the same commit. The `.rpiv/guidance/` tree has its own maintenance workflow (run `annotate-guidance`) and is not covered by this rule. See @.ai/skill-index-maintenance.md.
 
+### Tool surface rules
+
+These are derived from repeated cross-session corrections. Read this section before calling the `run` tool or any filesystem mutation.
+
+- **Use `run`, not bash.** All project commands go through the `run` tool (and filesystem ops through `pfs_*`). Do not use `bash`, `rm`, `mv`, `cp`, or `mkdir` for project files. If a tool is unavailable, stop and ask the user — do not workaround.
+- **`run` cmd is a JSON array of args, not a shell string.** Pass `["pnpm", "install"]`, not `"pnpm install"`. Never quote args, never pass absolute paths to commands, never use shell interpolation. If a launcher is allowed, the args are the exact argv.
+- **Full workspace check is the default.** Use `pnpm run check` for end-to-end validation (format + lint + typecheck + test). Do not filter to a single package unless explicitly iterating on that package — the scoped filter (`pnpm turbo run typecheck test --filter=<pkg>`) is for single-package iteration, not for "skipping parts of the check". The full check must cover all four layers.
+- **`pnpm run check` needs a higher timeout.** The default 30s is shorter than a cold full-workspace run. Pass an explicit timeout whenever invoking it.
+- **Pre-existing failures are not out of scope.** If `pnpm run check` fails on a file you did not touch, fix it as part of the same change. Do not assume pre-existing issues are someone else's problem.
+- **Try `eslint --fix` before manual edits.** For import order, type-imports, and formatting, run `pnpm turbo //#lint` (or `eslint . --fix` on a file) before hand-editing. Most of these are auto-fixed.
+- **Never auto-run interactive or user-facing tools.** `changeset`, `npm login`, anything that prompts — leave it for the user. The agent runs non-interactive commands only.
+
+### Skill scope rules
+
+These apply while a meta-skill (`design`, `plan`, `blueprint`, `discover`, `research`, `explore`, `revise`, `validate`, `code-review`, `changelog`, `create-handoff`, `resume-handoff`, `migrate-to-guidance`, `annotate-guidance`, `annotate-inline`, `architecture-review`) is active. Out-of-scope actions inside one of these skills have produced the largest single-session token wastes on record.
+
+- **Stay in artifact space.** A skill's deliverable is its artifact under `.rpiv/artifacts/<kind>/`, not source code. Do not `write`, `edit`, or `pfs_*` anything under `packages/*/src/` while a meta-skill is active. If the next step would touch source, stop and ask the user — do not implement.
+- **"Update X" / "just do Y" is a complete instruction.** Treat it as the full scope. Do not branch into adjacent work, do not re-enter a previous skill, do not auto-spawn the next skill in the pipeline. If ambiguity exists, surface it in a single sentence of plain prose; do not open an `ask_user_question` for clarifications the instruction did not request.
+- **Do not auto-dispatch reviewer subagents.** Skills like `plan`, `blueprint`, `design`, and `code-review` may _recommend_ running `artifact-code-reviewer` / `artifact-coverage-reviewer` in their workflow, but the recommendation must be confirmed by the user before spawning them. Default: do not run reviewers unless the user invoked a review explicitly or said "go ahead" after the recommendation.
+- **A meta-skill ends when its artifact is written.** Do not chain into the next skill (`design` → `plan`, `plan` → `implement`, etc.) without the user invoking it. Ending a skill is a stopping point, not a launchpad.
+
 ## Workspace commands
 
 ```sh
