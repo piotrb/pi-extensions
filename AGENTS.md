@@ -2,7 +2,7 @@
 
 ## After every edit, run the check command
 
-**No exceptions.** After any change to a `.ts` or config file, run the relevant check. The default `run` tool timeout (30s) is shorter than a full workspace check, so for a single-package edit run the scoped Turbo filter (typically well under 30s):
+**No exceptions.** After any change to a `.ts` or config file, run the relevant check, and **read the affected region (5-10 lines) to verify the file's literal state**. `edit` reports success when `oldText` is found, not when the result is correct — duplicate lines, truncated lines, and `oldText` matches in the wrong location have all shipped past verification. The default `run` tool timeout (30s) is shorter than a full workspace check, so for a single-package edit run the scoped Turbo filter (typically well under 30s):
 
 ```sh
 # Single package — typecheck + test only (format+lint still need a full check)
@@ -81,6 +81,8 @@ These are derived from repeated cross-session corrections. Read this section bef
 - **Pre-existing failures are not out of scope.** If `pnpm run check` fails on a file you did not touch, fix it as part of the same change. Do not assume pre-existing issues are someone else's problem.
 - **Try `eslint --fix` before manual edits.** For import order, type-imports, and formatting, run `pnpm turbo //#lint` (or `eslint . --fix` on a file) before hand-editing. Most of these are auto-fixed.
 - **Never auto-run interactive or user-facing tools.** `changeset`, `npm login`, anything that prompts — leave it for the user. The agent runs non-interactive commands only.
+- **Verify after every edit and every retry.** `edit` only checks that `oldText` was found — not that the result is correct. After every `edit` call, read the affected region (5-10 lines) to confirm the file's literal state. When retrying a failing `run` or any other call, compare the new arguments literally to the previous attempt; if identical, the mistake is unchanged and retrying the same form is wasted work.
+- **Read `@`-referenced files directly.** When a user message contains `@<path>` (e.g. `@AGENTS.md`, `@about-turbo.md`, `@.ai/skill.md`), the path is the literal file location — read it with the `read` tool. Do **not** dispatch a search subagent, do not guess the path, do not glob for it. `@` references from a user message resolve the same way they resolve inside `AGENTS.md` (relative to the file the reference appears in, or project root for direct user input). The `read` tool is always the right call.
 
 ### Skill scope rules
 
