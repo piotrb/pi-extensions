@@ -69,6 +69,7 @@ Each `packages/<name>/` is its own npm package with its own `package.json`, `tsc
 - **Shared tsconfig**: each package's `tsconfig.json` extends `../../tsconfig.base.json` with `"include": ["src/**/*"]`. Do not duplicate compilerOptions.
 - **File operations**: prefer `pfs_mv`, `pfs_cp`, `pfs_unlink`, `pfs_rmdir` for filesystem moves/deletes. Use `git_mv` only when you explicitly need git to track the rename in the index.
 - **Skills**: any change to `.ai/*.md` MUST update the Skills section below in the same commit. The `.rpiv/guidance/` tree has its own maintenance workflow (run `annotate-guidance`) and is not covered by this rule. See @.ai/skill-index-maintenance.md.
+- **Tests assert behavior, not data, and do not duplicate the producer.** When lifting a function to a shared lib (`pi-extension-utils`, etc.), delete the duplicate tests in the consumer — the lib's own tests cover the lifted function. The consumer's test file covers only consumer-specific surface (how it composes the lib, its own config schema, the rules it derives). A test that compares an object to a hardcoded literal of itself is documentation, not verification; if it would still pass with `() => undefined` swapped in, remove or rewrite it. Loader/merger tests exercise the loader/merger logic, not the data shape it returns.
 
 ### Tool surface rules
 
@@ -92,6 +93,8 @@ These apply while a meta-skill (`design`, `plan`, `blueprint`, `discover`, `rese
 - **"Update X" / "just do Y" is a complete instruction.** Treat it as the full scope. Do not branch into adjacent work, do not re-enter a previous skill, do not auto-spawn the next skill in the pipeline. If ambiguity exists, surface it in a single sentence of plain prose; do not open an `ask_user_question` for clarifications the instruction did not request.
 - **Do not auto-dispatch reviewer subagents.** Skills like `plan`, `blueprint`, `design`, and `code-review` may _recommend_ running `artifact-code-reviewer` / `artifact-coverage-reviewer` in their workflow, but the recommendation must be confirmed by the user before spawning them. Default: do not run reviewers unless the user invoked a review explicitly or said "go ahead" after the recommendation.
 - **A meta-skill ends when its artifact is written.** Do not chain into the next skill (`design` → `plan`, `plan` → `implement`, etc.) without the user invoking it. Ending a skill is a stopping point, not a launchpad.
+- **Wait for explicit confirmation during workshops.** When the user is iterating on an issue with you (asking questions, raising concerns, asking for explanations), do not start writing artifacts, spawning sub-agents, or producing deliverables until they say "go", "do it", "write it", or equivalent. "I though you're just X" / "I didn't confirm yet" / "we're just working through issues" all mean: stop and continue the conversation. A workshop is a conversation, not a green light.
+- **Don't fabricate the next step from a deliverable.** After writing/updating an artifact (design, plan, review), do not invent a follow-up action — running reviewers, kicking off the next skill, opening a multi-choice question, writing tests. The user invoked a single deliverable; that is the deliverable. If you believe a follow-up is useful, name it in one sentence of prose and wait.
 
 ## Workspace commands
 
