@@ -54,4 +54,3 @@ The package is transitional. The `plans/migrate-to-fd.md` file describes the pat
 ## What this skill does not do
 
 - It does not cover the canonical `pi-*` package shape — see `pi-package-scaffold`.
-- It does not cover the per-package architecture docs in `.rpiv/guidance/` (the migration plan is the only `.rpiv/guidance/packages/pi-bfs/` content; that file is being phased out and replaced by this skill).

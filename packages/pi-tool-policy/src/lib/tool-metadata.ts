@@ -194,18 +194,9 @@ export async function aggregateToolMetadata(
   for (const tool of tools) {
     const override = configOverrides[tool.name]
     if (!override?.aspects) continue
-    const builtInAspects = new Set(
-      Object.keys(STOCK_BUILTIN_TOOL_METADATA[tool.name]?.aspects ?? {}).map((a) =>
-        a.endsWith("[]") ? a.slice(0, -2) : a,
-      ),
-    )
+    const builtInAspects = new Set(Object.keys(STOCK_BUILTIN_TOOL_METADATA[tool.name]?.aspects ?? {}))
     for (const aspectName of Object.keys(override.aspects)) {
-      // Normalize override aspect names (strip `[]`) so a user override
-      // of `path` matches a built-in declaration of `path[]` and vice
-      // versa — they're the same conceptual aspect, just in different
-      // cardinality modes.
-      const normalized = aspectName.endsWith("[]") ? aspectName.slice(0, -2) : aspectName
-      if (!builtInAspects.has(normalized)) {
+      if (!builtInAspects.has(aspectName)) {
         warnings.push({ type: "orphan-aspect-reference", tool: tool.name, aspect: aspectName })
       }
     }

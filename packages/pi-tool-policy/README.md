@@ -109,4 +109,4 @@ The check runs format, lint, typecheck, and test across all workspace packages. 
 
 ## Architecture
 
-See `.rpiv/guidance/packages/pi-tool-policy/architecture.md`.
+See `working-with-pi-tool-policy` and `pi-tool-policy-mode-controller` in the workspace's learning index (`.agents/learning-index.md`).

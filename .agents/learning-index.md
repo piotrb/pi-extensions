@@ -134,11 +134,43 @@ Core facts about the `pi-bfs` package — it is transitional, marked `private`, 
 migration to a future `pi-fd` package. Use this skill when working on, depending on, or
 evaluating the `pi-bfs` package.
 
+### `working-with-pi-context-preloader`
+
+Core facts about the `pi-context-preloader` package — the only package that hooks lifecycle
+events instead of registering tools. Auto-preloads `@path` references from `AGENTS.md` into
+the system prompt before each agent turn, with a `session_start` cache clear and a
+one-shot-per-session `before_agent_start` injection. Use this skill when working on,
+depending on, or evaluating the `pi-context-preloader` package.
+
 ### `working-with-pi-extension-utils`
 
 Core facts about the `pi-extension-utils` package — a pure shared library with 3 spawn
 helpers consumed by 4 other packages, must be published to npm. Use this skill when working
 on, depending on, or evaluating the `pi-extension-utils` package.
+
+### `working-with-pi-git`
+
+Core facts about the `pi-git` package — 9 structured git tools (`git_status`, `git_add`,
+`git_rm`, `git_mv`, `git_diff`, `git_restore`, `git_commit`, `git_log`, `git_push`) in one
+file, wrapping the `git` CLI via `spawnStreaming`. The canonical "many tools in one file"
+example. Errors surface via exit codes (not throws), the `cwd` parameter is `ctx.cwd` unless
+overridden. Use this skill when working on, depending on, or evaluating the `pi-git`
+package.
+
+### `working-with-pi-pfs`
+
+Core facts about the `pi-pfs` package — 4 atomic filesystem tools (`pfs_unlink`, `pfs_rmdir`,
+`pfs_cp`, `pfs_mv`) using `node:fs/promises` directly, with path validation that rejects
+absolute paths and `..` escapes at the boundary. Does not use `pi-extension-utils` (atomic
+operations, not subprocess spawns). Use this skill when working on, depending on, or
+evaluating the `pi-pfs` package.
+
+### `working-with-pi-ripgrep`
+
+Core facts about the `pi-ripgrep` package — single-tool ripgrep wrapper registered as
+`name: "ripgrep"` (not `"grep"`), with a transitional state pending the migration to
+register under the built-in name. The external `rg` dependency is required. Use this skill
+when working on, depending on, or evaluating the `pi-ripgrep` package.
 
 ### `working-with-pi-task-runner`
 
@@ -163,8 +195,23 @@ working on, depending on, or evaluating the `pi-tool-policy` package.
 
 The mode controller, aspect kinds, and matcher internals for the `pi-tool-policy` package —
 verdict enum, per-mode single-pass evaluation, tool-metadata aggregation, and tagging-rule
-semantics. Use this skill when working in `src/lib/` of `pi-tool-policy`, designing a new
-mode, or debugging a matcher decision.
+semantics. Covers the post-`FieldBinding`-refactor v2 type contract (`BaseAspectMode`,
+`FieldBinding`, `isArrayBinding`, `fieldName`) and the per-field dispatch loop, but defers the
+dispatch-key gotcha to `pi-tool-policy-per-field-aspect-cardinality`. Use this skill when
+working in `src/lib/` of `pi-tool-policy`, designing a new mode, or debugging a matcher
+decision.
+
+### `pi-tool-policy-per-field-aspect-cardinality`
+
+The per-field `FieldBinding` shape for `AspectDeclaration` in `pi-tool-policy` — the data
+model (`FieldBinding = string | { field, mode?: "scalar" | "array" }`, the 5-value
+`BaseAspectMode` enum with no `[]` suffix), the per-field dispatch loop in `policy.ts` and
+`coverage.ts`, the mixed-cardinality test pattern, and the dispatch-key gotcha (the per-binding
+loop must pass `decl.mode` to `matchAspect` / `matchAspectEach`, not the `aspectName` from
+`Object.entries` — a real bug latent in the post-refactor working tree). Use this skill when
+changing the `FieldBinding` shape, when a non-`"path"` aspectName bound to `mode: "path"` is
+producing surprising matcher results, or when writing a regression test for the `git_mv`
+`source` aspect case.
 
 ### `pi-npm-publishing`
 

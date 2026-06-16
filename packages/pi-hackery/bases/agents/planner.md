@@ -3,6 +3,7 @@ context and produces a {PHASE_STRUCTURED} implementation plan, saved to disk at 
 then echoed inline.
 
 Frontmatter:
+
 - model: a top-tier model ({STRONG_MODEL}) — this is synthesis/judgment work; list 1-2 fallbacks.
 - tools: read + search + a single write capability, NO execution/test tools ({READ_SET} + write).
 - systemPromptMode: replace
@@ -14,6 +15,7 @@ Purpose & mandate boundary: produces the plan document only. Does not write prod
 does not run tests, does not implement. State this in the first paragraph.
 
 Input contract — the task prompt provides:
+
 1. Desired outcome — what to achieve.
 2. Relevant context — findings from prior investigation, existing patterns, constraints, discovered skills.
 3. Parent document path (optional) — for a relative Parent: link.

@@ -3,7 +3,7 @@ import { genericPatternToRegex } from "@piotrb/pi-extension-utils"
 
 import { matchAspect, matchAspectEach } from "./aspects.ts"
 import type { AnyVerdict, Config, PolicyDecision, ResolvedToolMetadata, RuleResult, Verdict } from "./types.ts"
-import { baseMode, isArrayMode } from "./types.ts"
+import { fieldName, isArrayBinding } from "./types.ts"
 
 /** Strictness ranking: deny > ask > allow. */
 const STRICTNESS: Record<Verdict, number> = { deny: 3, ask: 2, allow: 1 }
@@ -132,20 +132,15 @@ export function evaluate(
       const aspectRule = mode.aspectRules[aspectName]
       if (!aspectRule) continue
 
-      // Array mode (`mode: "X[]"`) — iterate per element and combine
-      // deny > ask > allow. Scalar mode — coerce and match as one.
-      const baseName = isArrayMode(decl.mode) ? baseMode(decl.mode) : aspectName
-
-      for (const field of decl.fields) {
-        // AspectDeclaration.fields is `string[]` — the field name is the string.
+      for (const binding of decl.fields) {
+        const field = fieldName(binding)
         const value = args[field]
         if (value === undefined || value === null) continue
 
-        if (isArrayMode(decl.mode)) {
-          // Array mode requires the value to be a string[]; anything else
-          // is a schema violation — skip and let the default verdict win.
+        if (isArrayBinding(binding)) {
+          // Array-mode binding: iterate per element and combine.
           if (!Array.isArray(value)) continue
-          const result = matchAspectEach(baseName, value as string[], aspectRule, ctx.cwd)
+          const result = matchAspectEach(aspectName, value as string[], aspectRule, ctx.cwd)
           if (result === "undecided") continue
           contribute("aspect", field, result.verdict, { aspect: aspectName, pattern: result.pattern })
           explicitRuleFired = true

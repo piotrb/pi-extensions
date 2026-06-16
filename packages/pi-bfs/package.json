@@ -24,9 +24,13 @@
         ],
         "aspects": {
           "path": {
-            "mode": "path[]",
+            "mode": "path",
             "fields": [
-              "paths"
+              {
+                "field": "paths",
+                "mode": "array"
+              },
+              "cwd"
             ]
           }
         }

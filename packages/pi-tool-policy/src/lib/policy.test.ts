@@ -521,6 +521,141 @@ describe("evaluate", () => {
   })
 })
 
+describe("per-field aspect cardinality (FieldBinding)", () => {
+  // The v2 refactor moved cardinality from `mode: "path[]"` (whole-aspect)
+  // to a per-field `FieldBinding` shape. The same `path` aspect can
+  // bind a scalar `cwd` field and an array-mode `paths` field. The
+  // matcher dispatches per binding, not per aspect. This is the
+  // load-bearing test for the refactor.
+
+  it("ripgrep: scalar cwd is matched as a single path; array paths are matched per element", () => {
+    // .env in cwd → deny; everything else allowed. cwd is matched as
+    // a single path (relative to ctx.cwd /repo), so /repo/.env
+    // becomes .env — which the *.env pattern matches.
+    const path: AspectRule = { patterns: { "**": "allow", "*.env": "deny" } }
+    const meta: ResolvedToolMetadata = {
+      tags: ["readonly"],
+      fields: {
+        path: {
+          mode: "path",
+          fields: [{ field: "paths", mode: "array" }, "cwd"],
+        },
+      },
+    }
+    const decision = runInMode(
+      "ripgrep",
+      { paths: ["/repo/src/a.ts", "/repo/src/b.ts"], cwd: "/repo/.env" },
+      {
+        description: "test",
+        defaultDecision: "ask",
+        tagRules: {},
+        toolRules: {},
+        aspectRules: { path },
+      },
+      [],
+      new Map([["ripgrep", meta]]),
+    )
+    // cwd is a single path that matches the deny pattern. The scalar
+    // match fires; per-element paths are both allowed but the scalar
+    // cwd deny is more restrictive → final verdict is deny.
+    expect(decision.action).toBe("deny")
+  })
+
+  it("git: array paths on the path aspect, scalar source on git_mv", () => {
+    // Simulate git_add (single `path` aspect with array-mode `paths`)
+    // and git_mv (separate `source` and `destination` aspects).
+    const path: AspectRule = { patterns: { "**": "allow", "*.env": "deny" } }
+    const source: AspectRule = { patterns: { "**": "allow", "*.env": "deny" } }
+    const destination: AspectRule = { patterns: { "**": "allow" } }
+
+    const gitAddMeta: ResolvedToolMetadata = {
+      tags: ["mutating"],
+      fields: { path: { mode: "path", fields: [{ field: "paths", mode: "array" }] } },
+    }
+    const gitMvMeta: ResolvedToolMetadata = {
+      tags: ["mutating"],
+      fields: {
+        source: { mode: "path", fields: [{ field: "source", mode: "array" }] },
+        destination: { mode: "path", fields: ["destination"] },
+      },
+    }
+    const meta = new Map<string, ResolvedToolMetadata>([
+      ["git_add", gitAddMeta],
+      ["git_mv", gitMvMeta],
+    ])
+
+    // git_add with one .env among the array → deny (per-element combine).
+    const gitAdd = runInMode(
+      "git_add",
+      { paths: ["/repo/src/a.ts", "/repo/.env"] },
+      {
+        description: "test",
+        defaultDecision: "ask",
+        tagRules: {},
+        toolRules: {},
+        aspectRules: { path },
+      },
+      [],
+      meta,
+    )
+    expect(gitAdd.action).toBe("deny")
+
+    // git_mv with a .env source → deny (array-mode source match).
+    const gitMv = runInMode(
+      "git_mv",
+      { source: ["/repo/.env"], destination: "/repo/public" },
+      {
+        description: "test",
+        defaultDecision: "ask",
+        tagRules: {},
+        toolRules: {},
+        aspectRules: { source, destination },
+      },
+      [],
+      meta,
+    )
+    expect(gitMv.action).toBe("deny")
+  })
+
+  it("mixed scalar + array on the same aspect: both bindings contribute, most-restrictive wins", () => {
+    // Both fields bind to the same `path` aspect. `cwd` is scalar
+    // (matched as one), `paths` is array (matched per element). The
+    // matcher contributes both to the running fold.
+    const path: AspectRule = { patterns: { "**": "allow", "*.env": "deny" } }
+    const meta: ResolvedToolMetadata = {
+      tags: ["readonly"],
+      fields: {
+        path: {
+          mode: "path",
+          fields: [{ field: "paths", mode: "array" }, "cwd"],
+        },
+      },
+    }
+    const decision = runInMode(
+      "ripgrep",
+      // paths are all allow; cwd matches deny → final deny
+      { paths: ["/repo/src/a.ts", "/repo/src/b.ts"], cwd: "/repo/.env" },
+      {
+        description: "test",
+        defaultDecision: "ask",
+        tagRules: {},
+        toolRules: {},
+        aspectRules: { path },
+      },
+      [],
+      new Map([["ripgrep", meta]]),
+    )
+    expect(decision.action).toBe("deny")
+    const aspectRules = decision.ruleTrail.filter((r) => r.layer === "aspect")
+    // Two aspect-layer rules contributed: one for the array-mode paths
+    // (allow, applied) and one for the scalar cwd (deny, applied —
+    // strictly more restrictive, takes over from allow).
+    expect(aspectRules.length).toBe(2)
+    const fields = aspectRules.map((r) => r.key).sort()
+    expect(fields).toEqual(["cwd", "paths"])
+  })
+})
+
 // Tiny smoke: re-export the import to keep the dependency explicit in the
 // coverage report and to ensure the import path stays valid.
 describe("module surface", () => {

@@ -49,7 +49,7 @@ describe("buildSuggestedAllow", () => {
     it("locks git_add with paths: ['.env', 'src/index.ts'] using the joined value", () => {
       const meta: ResolvedToolMetadata = {
         tags: ["mutating"],
-        fields: { path: { mode: "path[]", fields: ["paths"] } },
+        fields: { path: { mode: "path", fields: [{ field: "paths", mode: "array" }] } },
       }
       const out = buildSuggestedAllow("git_add", { paths: [".env", "src/index.ts"] }, meta)
       expect(out.entry).toEqual({

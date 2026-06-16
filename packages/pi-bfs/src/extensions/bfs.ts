@@ -12,6 +12,8 @@
  * Output is streamed in real time and truncated by default (ctrl+o to expand).
  */
 
+import { isAbsolute, resolve } from "node:path"
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { Text } from "@earendil-works/pi-tui"
 import { spawnStreaming } from "@piotrb/pi-extension-utils"
@@ -23,6 +25,7 @@ const DEFAULT_VISIBLE_LINES = 30
 
 interface BfsDetails {
   paths: string[]
+  cwd: string
   totalLines: number
   exitCode: number | null
   streaming?: boolean
@@ -50,6 +53,15 @@ export default function (pi: ExtensionAPI) {
         Type.Array(Type.String(), {
           description:
             "Paths to search (default: current working directory). " + "Multiple paths are searched in order.",
+        }),
+      ),
+
+      cwd: Type.Optional(
+        Type.String({
+          description:
+            "Working directory for the bfs process. Relative paths resolve against " +
+            "the session's ctx.cwd. Defaults to ctx.cwd when omitted. The directory must " +
+            "exist; the spawn will fail otherwise.",
         }),
       ),
 
@@ -220,6 +232,8 @@ export default function (pi: ExtensionAPI) {
     // ── execute ──────────────────────────────────────────────────────────────
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      const resolvedCwd = params.cwd ? (isAbsolute(params.cwd) ? params.cwd : resolve(ctx.cwd, params.cwd)) : ctx.cwd
+
       const bfsArgs: string[] = []
 
       // ── symlink flags (must come first) ───────────────────────────────────
@@ -271,7 +285,7 @@ export default function (pi: ExtensionAPI) {
       bfsArgs.push("-print")
 
       const { lines, exitCode, spawnError } = await spawnStreaming("bfs", bfsArgs, {
-        cwd: ctx.cwd,
+        cwd: resolvedCwd,
         signal,
         notFoundHint: "brew install bfs  |  apt install bfs",
         onLines: (accumulated) => {
@@ -279,6 +293,7 @@ export default function (pi: ExtensionAPI) {
             content: [{ type: "text", text: accumulated.join("\n") }],
             details: {
               paths: params.paths ?? [],
+              cwd: resolvedCwd,
               totalLines: accumulated.length,
               exitCode: null,
               streaming: true,
@@ -290,14 +305,14 @@ export default function (pi: ExtensionAPI) {
       if (spawnError) {
         return {
           content: [{ type: "text" as const, text: spawnError }],
-          details: { paths: params.paths ?? [], totalLines: 0, exitCode: -1 },
+          details: { paths: params.paths ?? [], cwd: resolvedCwd, totalLines: 0, exitCode: -1 },
           isError: true,
         }
       }
 
       return {
         content: [{ type: "text" as const, text: lines.length === 0 ? "No results found." : lines.join("\n") }],
-        details: { paths: params.paths ?? [], totalLines: lines.length, exitCode },
+        details: { paths: params.paths ?? [], cwd: resolvedCwd, totalLines: lines.length, exitCode },
         isError: exitCode !== 0,
       }
     },
@@ -340,6 +355,9 @@ export default function (pi: ExtensionAPI) {
       text += theme.fg("accent", searchPaths)
       if (flags.length > 0) {
         text += theme.fg("dim", "  " + flags.join("  "))
+      }
+      if (args.cwd) {
+        text += theme.fg("muted", `  (cwd: ${args.cwd})`)
       }
 
       return new Text(text, 0, 0)

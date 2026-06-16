@@ -27,7 +27,9 @@
       "./src/extensions/hackery.ts"
     ],
     "_comment": "Placeholder extension — no tools are registered yet. The package is a sandbox for experimental tooling, utilities, and skills. The `pi.skills` field below tells skill discovery where to find skills for this package.",
-    "skills": ["./skills"]
+    "skills": [
+      "./skills"
+    ]
   },
   "keywords": [
     "pi-package",

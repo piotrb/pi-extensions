@@ -15,19 +15,14 @@ You are orienting to the `pi-extensions` monorepo or answering a question about 
 
 ```
 AGENTS.md                                # project entry point
-.rpiv/guidance/                          # layer-keyed architecture docs (read on demand)
-  packages/architecture.md               # per-package shape, tool registration
-  packages/pi-extension-utils/...        # shared spawn helpers
-  packages/pi-context-preloader/...      # @path auto-preloader (lifecycle hooks)
-  packages/pi-git/...                    # 9 git tools
-  packages/pi-pfs/...                    # 4 fs tools
-  packages/pi-ripgrep/...                # single rg wrapper
-  packages/pi-task-runner/...            # run tool with permission modal
-  packages/pi-task-runner/src/lib/...    # pattern matcher, config loader
-  packages/pi-bfs/...                    # transitional, pending pi-fd
+.agents/                                 # workspace learnings + dispatch index
+  learning-index.md                      # the dispatch index
+  skills/<name>/SKILL.md                 # per-concept skills
+.rpiv/                                   # session artifacts
+  artifacts/                             # plans, designs, validation, research
 tsconfig.base.json, turbo.json,
 eslint.config.mjs, .prettierrc           # shared toolchain
-.ai/                                     # task-keyed skills (auto-loaded)
+packages/                                # the workspace packages (see the per-package working-with skills)
 ```
 
 ## Commands

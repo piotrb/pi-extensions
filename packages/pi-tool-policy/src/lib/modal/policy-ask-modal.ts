@@ -10,7 +10,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
 import type { CoverageReport } from "../coverage.ts"
 import { coerceForMatch } from "../policy.ts"
 import type { AspectDeclaration, ResolvedToolMetadata, RuleResult, ToolRuleEntry, Verdict } from "../types.ts"
-import { isArrayMode } from "../types.ts"
+import { fieldName, isArrayBinding } from "../types.ts"
 import { buildAskDisplay, formatValue } from "./ask-display.ts"
 import { openPolicyInputModal } from "./policy-input-modal.ts"
 import { buildSuggestedAllow } from "./suggested-allow.ts"
@@ -149,16 +149,17 @@ export function buildRuleTypeOptions(
 }
 
 /**
- * Compute the prefill value for an aspect rule. For scalar mode
- * it's the coerced single string; for `[]` mode the joined elements
- * with a space (matching how `coerceForMatch` joins arrays). Returns
- * undefined if there's no string-coercible value.
+ * Compute the prefill value for an aspect rule. For scalar-mode
+ * bindings it's the coerced single string; for array-mode bindings
+ * the joined elements with a space (matching how `coerceForMatch`
+ * joins arrays). Returns undefined if there's no string-coercible value.
  */
 function computeAspectPrefill(decl: AspectDeclaration, input: Record<string, unknown>): string | undefined {
-  for (const field of decl.fields) {
+  for (const binding of decl.fields) {
+    const field = fieldName(binding)
     const raw = input[field]
     if (raw === undefined || raw === null) continue
-    if (isArrayMode(decl.mode)) {
+    if (isArrayBinding(binding)) {
       if (!Array.isArray(raw)) continue
       const elements = raw.filter((v): v is string => typeof v === "string" && v.length > 0)
       if (elements.length === 0) continue

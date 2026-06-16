@@ -26,4 +26,3 @@ Do not make the edits yet, compose a list of these changes for the user's final 
 Do not accept implied approval, only accept explicit approval.
 
 Once the user approves, make the edits.
-

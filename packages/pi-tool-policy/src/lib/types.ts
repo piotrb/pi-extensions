@@ -109,33 +109,42 @@ export interface AddTagsAction {
   tags: string[]
 }
 
+/**
+ * A single field binding inside an `AspectDeclaration.fields` array.
+ * A bare string is shorthand for `{ field: <name>, mode: "scalar" }` —
+ * the most common case (most tool input fields are single strings).
+ * The object form opts in to array-mode per-field iteration.
+ */
+export type FieldBinding = string | { field: string; mode?: "scalar" | "array" }
+
+/** True if the field binding is array-mode (per-element combine). */
+export function isArrayBinding(binding: FieldBinding): boolean {
+  return typeof binding !== "string" && binding.mode === "array"
+}
+
+/** Extract the field name from a binding (string or object). */
+export function fieldName(binding: FieldBinding): string {
+  return typeof binding === "string" ? binding : binding.field
+}
+
+/** The base mode names available for `AspectDeclaration.mode`. */
+export type BaseAspectMode = "path" | "url" | "bash" | "glob" | "regex"
+
 /** A tool's aspect declaration: which fields are bound to which matcher mode. */
 export interface AspectDeclaration {
   /**
-   * The aspect's pattern-matching mode. A `[]` suffix (e.g. `"path[]"`)
-   * marks the aspect as array-mode: the matcher iterates each element
-   * of the input value as its own match unit and combines the results
-   * deny > ask > allow. Without the suffix, the matcher treats the
-   * value (after coercion) as a single string to match.
+   * The aspect's pattern-matching mode. Cardinality is per-field (see
+   * `FieldBinding`); the aspect's `mode` only identifies the matcher
+   * semantics (path-glob, URL-host, bash-word, basename-glob, regex).
    */
-  mode: "path" | "path[]" | "url" | "url[]" | "bash" | "bash[]" | "glob" | "glob[]" | "regex" | "regex[]"
+  mode: BaseAspectMode
   /**
-   * Root keys on the tool's input that are matched against this aspect.
-   * The matcher coerces values via `coerceForMatch`: strings pass through
-   * unchanged, `string[]` is joined with " " (for scalar-mode aspects)
-   * or iterated per element (for `[]`-mode aspects).
+   * The fields on the tool's input bound to this aspect. Each entry
+   * is either a bare string (scalar cardinality) or an object opting
+   * in to array cardinality for that field. Array-mode fields are
+   * matched element-by-element and combined deny > ask > allow.
    */
-  fields: string[]
-}
-
-/** True if the mode suffix is `[]` (array mode). */
-export function isArrayMode(mode: AspectDeclaration["mode"]): boolean {
-  return mode.endsWith("[]")
-}
-
-/** Strip the `[]` suffix to get the base mode. */
-export function baseMode(mode: AspectDeclaration["mode"]): "path" | "url" | "bash" | "glob" | "regex" {
-  return mode.slice(0, -2) as "path" | "url" | "bash" | "glob" | "regex"
+  fields: FieldBinding[]
 }
 
 /** Tool metadata: structural layer (static tags + aspect declarations). */

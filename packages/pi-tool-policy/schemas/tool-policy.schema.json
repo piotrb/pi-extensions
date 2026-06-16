@@ -153,12 +153,22 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "mode": { "enum": ["path", "path[]", "url", "url[]", "bash", "bash[]", "glob", "glob[]", "regex", "regex[]"] },
+        "mode": { "enum": ["path", "url", "bash", "glob", "regex"] },
         "fields": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "oneOf": [
+              { "type": "string", "minLength": 1 },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "field": { "type": "string", "minLength": 1 },
+                  "mode": { "enum": ["scalar", "array"] }
+                },
+                "required": ["field"]
+              }
+            ]
           }
         }
       },

@@ -168,15 +168,16 @@ export async function checkAndPrompt(
 
   const args = event.input as Record<string, unknown>
 
-  // Collect path-aspect-bound field names. The v2 design recognizes any
-  // aspect whose `mode` is "path" or "path[]" (URL/bash aspects don't
-  // apply to filesystem paths; glob/regex are basename-only and also
-  // skipped).
+  // Collect path-aspect-bound field names. Only `mode: "path"` aspects
+  // apply to filesystem paths; URL/bash aspects don't, and glob/regex
+  // are basename-only and are also skipped.
   const pathFields: string[] = []
   for (const decl of Object.values(meta.fields)) {
-    if (decl.mode !== "path" && decl.mode !== "path[]") continue
-    for (const field of decl.fields) {
-      // AspectDeclaration.fields is `string[]` — the field name is the string.
+    if (decl.mode !== "path") continue
+    for (const binding of decl.fields) {
+      // AspectDeclaration.fields is `FieldBinding[]`; the field name is
+      // the string or the `field` of the object form.
+      const field = typeof binding === "string" ? binding : binding.field
       pathFields.push(field)
     }
   }

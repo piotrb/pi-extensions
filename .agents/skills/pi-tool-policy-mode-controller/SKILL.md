@@ -13,7 +13,11 @@ All v2 types live in `src/lib/types.ts`:
 - **`AnyVerdict`** — `Verdict | RuleEntry`. The matcher accepts both shapes.
 - **`Mode`** — `description`, `extends?`, `defaultDecision`, `tagRules`, `toolRules`, `aspectRules`, `additionalInstructions?`. The shape of a single mode.
 - **`Config`** — `modeOrder`, `modes`, `allowedPaths`, `taggingRules`, `toolMetadata`. The top-level config shape.
-- **`ResolvedToolMetadata`** — `{ tags, fields }` for a single tool (post-aggregation).
+- **`AspectDeclaration`** — `{ mode: BaseAspectMode; fields: FieldBinding[] }`. The matcher semantics are per-aspect; cardinality is per-field (see `pi-tool-policy-per-field-aspect-cardinality`).
+- **`BaseAspectMode`** — `"path" | "url" | "bash" | "glob" | "regex"`. The 5-value enum. There is no `[]` suffix; per-field cardinality is encoded in the `FieldBinding` shape.
+- **`FieldBinding`** — `string | { field: string; mode?: "scalar" | "array" }`. A bare string is shorthand for `{ field: <name>, mode: "scalar" }`. The object form opts in to array-mode per field.
+- **`isArrayBinding(binding)`** / **`fieldName(binding)`** — helpers for iterating `AspectDeclaration.fields`. The previous `isArrayMode` / `baseMode` helpers are gone.
+- **`ResolvedToolMetadata`** — `{ tags, fields }` for a single tool (post-aggregation). `fields` is `Record<string, AspectDeclaration>` (aspect name → declaration).
 - **`RuleResult`** — one rule's contribution to the matcher trail: `{ layer, key, aspect?, pattern?, verdict, reason?, status }`.
 - **`PolicyDecision`** — `{ action, reason?, ruleTrail, effectiveTags, directoryGuardrailFired }`. The matcher's final output.
 
@@ -32,7 +36,7 @@ deny > ask > allow
 `policy.ts` exports `evaluate(event, config, currentMode, effectiveTags, toolMetadata, ctx)`. Within a single mode, in eval order:
 
 1. **`tagRules`** for each tag in `effectiveTags`.
-2. **`aspectRules`** for each declared aspect binding on the tool.
+2. **`aspectRules`** for each declared aspect binding on the tool. For each aspect, iterate `decl.fields` per `FieldBinding`: scalar bindings use `coerceForMatch(value)` and dispatch to `matchAspect`; array-mode bindings iterate `string[]` and dispatch to `matchAspectEach`. Each binding contributes one `applied` / `suppressed` / `noop` entry to the rule trail; most-restrictive wins across all bindings on the aspect. See `pi-tool-policy-per-field-aspect-cardinality` for the per-field loop and the dispatch-key gotcha.
 3. **`toolRules[tool]`** entries (with `fields` clause matching).
 4. **`defaultDecision`** as the fall-through.
 
@@ -50,6 +54,8 @@ The `ruleTrail` records each rule with status `applied` / `suppressed` / `noop`.
 - **`glob`** — raw picomatch on basename.
 - **`regex`** — `new RegExp(pattern).test(value)`.
 - **fallback** — `genericPatternToRegex` or `bashPatternToRegex` (per `aspect.mode`).
+
+After the per-field refactor, the `name` parameter should be `AspectDeclaration.mode` (one of the 5 base modes), not the user-defined aspect name from `Object.entries(meta.fields)`. The fallback branch only fires correctly when the user's aspect name happens to be one of the 5 — for any other name, the matcher falls through to generic-regex semantics. See `pi-tool-policy-per-field-aspect-cardinality` for the dispatch-key gotcha.
 
 The `picomatchCache` is module-level to avoid repeated compilation. Do not recreate the cache per call.
 
@@ -69,11 +75,11 @@ The `picomatchCache` is module-level to avoid repeated compilation. Do not recre
 
 `tool-metadata.ts` exports `aggregateToolMetadata(tools, configOverrides): Promise<AggregateResult>`. Three-layer aggregation, in priority order (lowest to highest):
 
-1. **`STOCK_BUILTIN_TOOL_METADATA`** (in-source) — the built-in tools pi ships.
-2. **Each extension's `package.json` `pi.toolMetadata`** — per-package metadata declared at registration time.
+1. **`STOCK_BUILTIN_TOOL_METADATA`** (in-source) — the built-in tools pi ships. All entries use the scalar form (`fields: ["path"]`); a `string[]` is a valid `FieldBinding[]` because `string` is one of the union members.
+2. **Each extension's `package.json` `pi.toolMetadata`** — per-package metadata declared at registration time. Per-field cardinality uses the `{ field, mode: "array" }` object form.
 3. **`config.toolMetadata`** (config) — user-supplied overrides.
 
-Config wins on conflict. The aggregator emits warnings for **orphan-aspect references** — overrides that introduce an aspect not in the built-in set. This is the only signal that a user has typoed an aspect name or referenced a future-aspect that isn't shipped.
+Config wins on conflict. The aggregator emits warnings for **orphan-aspect references** — overrides that introduce an aspect not in the built-in set. The pre-refactor orphan check normalized `path[]` → `path` to bridge between the v1 cardinality suffix and the aspect name; the post-refactor check compares aspect names as-is (no normalization needed — the `[]` suffix is gone from the type).
 
 ## Tagging rules
 
@@ -93,7 +99,7 @@ Config wins on conflict. The aggregator emits warnings for **orphan-aspect refer
 - **`DirectoryPermissionsState`** — in-memory tag-aware store. Methods: `reset(cwd)`, `matches(absPath, effectiveTags)`, `isGranted(absPath, effectiveTags)`, `record(absPath, tags, opts)`, `has(path)`.
 - **`checkAndPrompt(state, event, toolMetadata, effectiveTags, allowedPathsConfig, ctx, openModal)`** — free function. Loops-internally-to-layer for each ungranted path.
 
-The guardrail iterates over path-aspect-bound fields on the tool (where `decl.mode === "path"`). `string[]` field values are iterated as separate paths. The CWD auto-grant is the only persistent grant; everything else is session-scoped.
+The guardrail iterates over path-aspect-bound fields on the tool. After the per-field refactor, the check is `decl.mode === "path"` only — there is no `path[]` variant to test against. The iteration uses `fieldName(binding)` to extract each field key from the `FieldBinding[]` array. `string[]` field values are iterated as separate paths. The CWD auto-grant is the only persistent grant; everything else is session-scoped.
 
 ## The mode controller
 
@@ -135,3 +141,4 @@ The status bar text is always `mode: <name> (Alt+M)`. `additionalInstructions` r
 
 - It does not cover the package overview — see `working-with-pi-tool-policy`.
 - It does not cover the canonical `pi-*` package shape — see `pi-package-scaffold`.
+- It does not cover the per-field `FieldBinding` shape, the per-field dispatch loop, or the dispatch-key gotcha — see `pi-tool-policy-per-field-aspect-cardinality`.

@@ -9,7 +9,7 @@ You are about to make a change inside a `packages/pi-<name>/` directory. Before 
 
 Every `pi-*` package has a different shape, a different set of hard rules, and a different relationship to the other packages. The package's own architecture file is the fastest way to learn those specifics. Skipping the read is the most common cause of cross-cutting mistakes: you implement against the wrong convention, you miss a hard rule, you refactor something that is load-bearing.
 
-The workspace's own `.rpiv/guidance/packages/<name>/architecture.md` (when present) is the canonical per-package architecture doc. **When the guidance files are absent, fall back to the package's `README.md` and the source itself.**
+The package's `working-with-pi-<name>` skill is the canonical entry point for a `pi-*` package — read it first. When the skill is absent, fall back to the package's `README.md` and the source itself.
 
 ## How
 
@@ -24,7 +24,7 @@ Read end-to-end before editing. Look for:
 - **Hard rules** — the package's non-negotiable constraints (path validation, transaction boundaries, state lifetimes).
 - **Module structure** — which files exist, what each one is for, what is exported.
 - **Dependencies** — what the package imports and what depends on it.
-- **Cross-layer references** — links to other architecture files (in the workspace, in `.rpiv/guidance/`, or in the package's own tree).
+- **Cross-layer references** — links to other skills (in `.agents/skills/`) or the package's own tree.
 
 ## When to re-read
 
@@ -46,7 +46,6 @@ Skip the read when:
 
 ## What this skill does not do
 
-- It does not cover the workspace-wide `.rpiv/guidance/` tree as a whole — see `learning-management` for the storage layout.
 - It does not cover the `pi-hackery` package's specific layout — see `pi-hackery-folder-layout` for the bases/skills split.
 - It does not cover creating a new package — see `pi-package-scaffold`.
 

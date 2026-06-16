@@ -55,7 +55,7 @@ describe("buildAskDisplay", () => {
     it("emits one line per element (array mode)", () => {
       const meta: ResolvedToolMetadata = {
         tags: ["mutating"],
-        fields: { path: { mode: "path[]", fields: ["paths"] } },
+        fields: { path: { mode: "path", fields: [{ field: "paths", mode: "array" }] } },
       }
       const out = buildAskDisplay("git_add", { paths: [".env", "src/index.ts"] }, meta)
       expect(out.fieldLines).toEqual(["path: .env", "path: src/index.ts"])
@@ -75,7 +75,7 @@ describe("buildAskDisplay", () => {
       const meta: ResolvedToolMetadata = {
         tags: ["mutating"],
         fields: {
-          source: { mode: "path[]", fields: ["source"] },
+          source: { mode: "path", fields: [{ field: "source", mode: "array" }] },
           destination: { mode: "path", fields: ["destination"] },
         },
       }
@@ -96,7 +96,7 @@ describe("buildAskDisplay", () => {
     it("skips empty-string values in array mode", () => {
       const meta: ResolvedToolMetadata = {
         tags: ["mutating"],
-        fields: { path: { mode: "path[]", fields: ["paths"] } },
+        fields: { path: { mode: "path", fields: [{ field: "paths", mode: "array" }] } },
       }
       const out = buildAskDisplay("git_add", { paths: [".env", "", "src"] }, meta)
       expect(out.fieldLines).toEqual(["path: .env", "path: src"])

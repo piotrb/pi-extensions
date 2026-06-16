@@ -1,6 +1,6 @@
 import { coerceForMatch } from "../policy.ts"
 import type { ResolvedToolMetadata, ToolRuleEntry } from "../types.ts"
-import { isArrayMode } from "../types.ts"
+import { fieldName, isArrayBinding } from "../types.ts"
 import { formatValue } from "./ask-display.ts"
 
 /**
@@ -43,12 +43,13 @@ export function buildSuggestedAllow(
   if (toolMeta) {
     const fields: Record<string, string[]> = {}
     for (const [aspectName, decl] of Object.entries(toolMeta.fields)) {
-      for (const field of decl.fields) {
+      for (const binding of decl.fields) {
+        const field = fieldName(binding)
         const raw = input[field]
         if (raw === undefined || raw === null) continue
 
-        if (isArrayMode(decl.mode)) {
-          // Array mode: one line per element in the label; the
+        if (isArrayBinding(binding)) {
+          // Array-mode binding: one line per element in the label; the
           // persisted rule uses the joined value (matching
           // coerceForMatch's coercion) so the full-string
           // matcher locks on the same string.
@@ -59,8 +60,8 @@ export function buildSuggestedAllow(
           const rendered = elements.map((e) => formatValue(e)).join(", ")
           labelParts.push(`${aspectName}[]: ${rendered}`)
         } else {
-          // Scalar mode: coerce to a single string. The persisted
-          // rule stores the coerced form, and the matcher
+          // Scalar-mode binding: coerce to a single string. The
+          // persisted rule stores the coerced form, and the matcher
           // coerces incoming calls the same way, so full-string
           // equality locks the call.
           let coerced: string | undefined

@@ -2,6 +2,7 @@ Author an agent definition for a read-only investigator subagent that answers ON
 focused question about {DOMAIN} at a chosen effort level and returns a structured report.
 
 Frontmatter:
+
 - model: a mid-tier model ({DEFAULT_MODEL}); list 1-2 cheaper/older fallbacks under fallbackModels.
 - tools: read-only inspection + search tools only, no mutation tools ({READ_TOOL_SET}).
 - systemPromptMode: replace
@@ -14,15 +15,17 @@ Purpose & mandate boundary: investigates and reports; never edits, never acts. S
 in the first paragraph.
 
 Input contract — the task prompt provides:
+
 1. Question — a single focused aspect to investigate.
 2. Effort — one of {quick, moderate, thorough}.
-If either is missing, infer the most reasonable interpretation and state the assumption in the report.
+   If either is missing, infer the most reasonable interpretation and state the assumption in the report.
 
 Effort tiers, each with an explicit purpose and a tool-call budget:
+
 - quick: surface scan, answer visible in 1-2 obvious places. Budget ~3-5 calls.
 - moderate: trace relationships across {ARTIFACTS}. Budget ~8-15 calls.
 - thorough: deep subsystem understanding incl. tests, config, constraints. Budget ~15-30 calls.
-Give a concrete "use for" example per tier.
+  Give a concrete "use for" example per tier.
 
 Operating loop: parse the question → pick a search strategy matched to effort → execute
 searches in tool-preference order → follow leads (references/imports) within budget →

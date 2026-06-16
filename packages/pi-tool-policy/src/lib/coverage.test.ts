@@ -48,10 +48,10 @@ describe("buildCoverageReport", () => {
       expect(report.aspectCovered).toBe(true)
     })
 
-    it("uses per-element matching for `[]` mode aspects", () => {
+    it("uses per-element matching for array-mode bindings", () => {
       const meta: ResolvedToolMetadata = {
         tags: ["mutating"],
-        fields: { path: { mode: "path[]", fields: ["paths"] } },
+        fields: { path: { mode: "path", fields: [{ field: "paths", mode: "array" }] } },
       }
       const mode = modeWith({
         aspectRules: { path: { patterns: { "**/*.env": "deny", "**": "allow" } } },
@@ -61,10 +61,10 @@ describe("buildCoverageReport", () => {
       expect(report.aspectCovered).toBe(true)
     })
 
-    it("returns false for `[]` mode when ANY element hits a deny (most-restrictive across elements)", () => {
+    it("returns false for array-mode when ANY element hits a deny (most-restrictive across elements)", () => {
       const meta: ResolvedToolMetadata = {
         tags: ["mutating"],
-        fields: { path: { mode: "path[]", fields: ["paths"] } },
+        fields: { path: { mode: "path", fields: [{ field: "paths", mode: "array" }] } },
       }
       // Last-match-wins inside a single aspect rule; the deny pattern
       // is declared LAST so it shadows the more permissive fallback

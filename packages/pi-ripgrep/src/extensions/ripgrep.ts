@@ -267,7 +267,13 @@ export default function (pi: ExtensionAPI) {
       if (spawnError) {
         return {
           content: [{ type: "text" as const, text: spawnError }],
-          details: { pattern: params.pattern, paths: params.paths ?? [], cwd: resolvedCwd, totalLines: 0, exitCode: -1 },
+          details: {
+            pattern: params.pattern,
+            paths: params.paths ?? [],
+            cwd: resolvedCwd,
+            totalLines: 0,
+            exitCode: -1,
+          },
           isError: true,
         }
       }

@@ -77,4 +77,3 @@ When adding a new spawn helper:
 
 - It does not cover the canonical `pi-*` package shape — see `pi-package-scaffold`.
 - It does not cover the publishing workflow — see `pi-npm-publishing`.
-- It does not cover the per-package architecture docs in `.rpiv/guidance/` (those are being phased out and replaced by these skills).

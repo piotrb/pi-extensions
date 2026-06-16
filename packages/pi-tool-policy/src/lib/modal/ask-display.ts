@@ -1,6 +1,6 @@
 import { coerceForMatch } from "../policy.ts"
 import type { AspectDeclaration, ResolvedToolMetadata } from "../types.ts"
-import { isArrayMode } from "../types.ts"
+import { fieldName, isArrayBinding } from "../types.ts"
 
 /**
  * What the ask UI shows about a single tool call. A flat list of
@@ -67,19 +67,20 @@ export function buildAskDisplay(
 
 /**
  * Read the values of an aspect's bound fields as an array of strings.
- * One string per non-empty element. For scalar-mode aspects the
+ * One string per non-empty element. For scalar-mode bindings the
  * returned array has length 0 or 1 (the coerced value, if any).
- * For `[]`-mode aspects it has one entry per input element.
+ * For array-mode bindings it has one entry per input element.
  */
 function readAspectValues(decl: AspectDeclaration, input: Record<string, unknown>): string[] {
   const out: string[] = []
-  for (const field of decl.fields) {
+  for (const binding of decl.fields) {
+    const field = fieldName(binding)
     const raw = input[field]
     if (raw === undefined || raw === null) continue
 
-    if (isArrayMode(decl.mode)) {
-      // Array mode: the value MUST be a string[]; anything else is a
-      // schema violation, skip.
+    if (isArrayBinding(binding)) {
+      // Array-mode binding: the value MUST be a string[]; anything else
+      // is a schema violation, skip.
       if (!Array.isArray(raw)) continue
       for (const element of raw) {
         if (typeof element !== "string") continue
@@ -89,7 +90,7 @@ function readAspectValues(decl: AspectDeclaration, input: Record<string, unknown
       continue
     }
 
-    // Scalar mode: coerce (joins string[] with " ").
+    // Scalar-mode binding: coerce (joins string[] with " ").
     const coerced = coerceForMatch(raw)
     if (coerced && coerced.length > 0) out.push(coerced)
   }

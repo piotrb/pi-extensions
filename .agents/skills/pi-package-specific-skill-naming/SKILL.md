@@ -79,7 +79,6 @@ If the knowledge fits comfortably in the `working-with-<package>` core skill, do
 ## What this skill does not do
 
 - It does not cover workspace-wide learnings (those are at `.agents/skills/` with their own naming; they are not package-specific).
-- It does not cover the per-package architecture docs in `.rpiv/guidance/` (those are being phased out; this convention replaces them).
 - It does not cover the `pi-hackery` package's specific structure (see `pi-hackery-folder-layout` for that — it follows its own convention because the package itself is a special case).
 - It does not cover the workspace-wide scaffolding pattern (see `pi-package-scaffold`).
 

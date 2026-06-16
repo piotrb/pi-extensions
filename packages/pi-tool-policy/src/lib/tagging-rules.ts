@@ -5,6 +5,7 @@ import picomatch from "picomatch"
 import { matchAspect } from "./aspects.ts"
 import { coerceForMatch } from "./policy.ts"
 import type { AspectRule, ResolvedToolMetadata, TaggerRule, Verdict } from "./types.ts"
+import { fieldName } from "./types.ts"
 
 /**
  * Apply tagger rules to a tool_call event. The output is the AUGMENTED tag
@@ -70,11 +71,11 @@ export function applyTaggerRules(
             aspectsOk = false
             break
           }
-          // AspectDeclaration.fields is `string[]` — the root keys on the
-          // tool's input that the aspect binds to.
-          const fieldNames = decl.fields
+          // AspectDeclaration.fields is `FieldBinding[]` — the root keys
+          // on the tool's input that the aspect binds to.
           let aspectMatched = false
-          for (const field of fieldNames) {
+          for (const binding of decl.fields) {
+            const field = fieldName(binding)
             const value = args[field]
             if (value === undefined || value === null) continue
             const s = coerceForMatch(value)

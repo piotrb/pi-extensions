@@ -3,7 +3,7 @@ import { genericPatternToRegex } from "@piotrb/pi-extension-utils"
 import { matchAspect, matchAspectEach } from "./aspects.ts"
 import { coerceForMatch } from "./policy.ts"
 import type { AnyVerdict, Mode, ResolvedToolMetadata, Verdict } from "./types.ts"
-import { baseMode, isArrayMode } from "./types.ts"
+import { fieldName, isArrayBinding } from "./types.ts"
 
 /**
  * What existing rules would already allow this call. The 'Allow & Save'
@@ -57,13 +57,13 @@ function isAspectCovered(
   for (const [aspectName, decl] of Object.entries(toolMeta.fields)) {
     const aspectRule = mode.aspectRules[aspectName]
     if (!aspectRule) continue
-    const baseName = isArrayMode(decl.mode) ? baseMode(decl.mode) : aspectName
-    for (const field of decl.fields) {
+    for (const binding of decl.fields) {
+      const field = fieldName(binding)
       const value = input[field]
       if (value === undefined || value === null) continue
-      if (isArrayMode(decl.mode)) {
+      if (isArrayBinding(binding)) {
         if (!Array.isArray(value)) continue
-        const result = matchAspectEach(baseName, value as string[], aspectRule, cwd)
+        const result = matchAspectEach(aspectName, value as string[], aspectRule, cwd)
         if (result !== "undecided" && result.verdict === "allow") return true
         continue
       }

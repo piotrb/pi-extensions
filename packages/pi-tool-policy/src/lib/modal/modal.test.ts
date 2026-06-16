@@ -352,7 +352,7 @@ describe("buildPolicyAskTitle", () => {
   it("includes the per-element path lines for an array-mode aspect", () => {
     const meta: ResolvedToolMetadata = {
       tags: ["mutating"],
-      fields: { path: { mode: "path[]", fields: ["paths"] } },
+      fields: { path: { mode: "path", fields: [{ field: "paths", mode: "array" }] } },
     }
     const title = buildPolicyAskTitle({
       toolName: "git_add",
