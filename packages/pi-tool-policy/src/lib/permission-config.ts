@@ -237,6 +237,31 @@ function resolveExtends(modes: Record<string, Mode>, warnings: string[]): Record
   return resolved
 }
 
+/**
+ * Walk every mode's regex-aspect rules and try to compile every pattern
+ * as a RegExp. Push a warning for any pattern that throws. Scoped to
+ * the `regex` aspect kind because that's the only aspect whose matcher
+ * (in `aspects.ts`) wraps the pattern in `new RegExp(...)` and silently
+ * swallows the throw — path / url / bash / glob aspects use picomatch
+ * or pattern-string matchers that either compile differently or throw
+ * loudly.
+ */
+function validateAspectPatterns(modes: Record<string, Mode>, warnings: string[]): void {
+  for (const [modeName, mode] of Object.entries(modes)) {
+    for (const [aspectName, aspect] of Object.entries(mode.aspectRules)) {
+      if (aspectName !== "regex") continue
+      for (const pattern of Object.keys(aspect.patterns)) {
+        try {
+          new RegExp(pattern)
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          warnings.push(`Invalid regex pattern in mode '${modeName}' aspect '${aspectName}': ${pattern} (${message})`)
+        }
+      }
+    }
+  }
+}
+
 async function readJsonSafe(path: string): Promise<Partial<Config> | null> {
   try {
     const raw = await readFile(path, "utf-8")
@@ -290,6 +315,14 @@ export async function loadConfig(cwd: string): Promise<LoadedConfig> {
   }
 
   const warnings: string[] = []
+
+  // Validate every aspect pattern is a valid regex source. Patterns that
+  // fail to compile are added to `warnings` (visible via /tool_policy) but
+  // the config is still loaded — a malformed pattern produces a matcher
+  // that no-ops on every call (see aspects.ts). Surfacing the warning at
+  // load time means a typo in the config (e.g. "[unclosed") is reported
+  // in the modal instead of silently disabling the rule.
+  validateAspectPatterns(merged.modes, warnings)
 
   // Resolve extends with cycle detection.
   merged.modes = resolveExtends(merged.modes, warnings)

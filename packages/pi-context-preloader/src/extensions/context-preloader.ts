@@ -6,8 +6,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
 const MAX_DEPTH = 5
 const LOG_FILE = join(homedir(), ".pi", "context-preloader.log")
+// When set to "1" (or any truthy value), diagnostic log lines are appended to
+// LOG_FILE. Off by default — production runs are silent unless the user opts in
+// via `PI_CONTEXT_PRELOADER_DEBUG=1`. The same env var is used by pi-tool-policy
+// for its CWD auto-grant log line.
+const DEBUG = process.env.PI_CONTEXT_PRELOADER_DEBUG === "1"
 
 function log(msg: string): void {
+  if (!DEBUG) return
   const ts = new Date().toISOString()
   appendFileSync(LOG_FILE, `${ts}  ${msg}\n`)
 }

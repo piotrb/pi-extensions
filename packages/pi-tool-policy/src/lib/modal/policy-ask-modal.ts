@@ -398,6 +398,56 @@ interface PickRuleTypeOptions {
  * here is a programming error (no aspects AND no tool row), so we
  * cancel.
  */
+/**
+ * Pure reducer for the rule-type submenu's edge cases. The full
+ * `pickRuleType` function is an async loop because it has to await
+ * `ctx.ui.select` / `ctx.ui.input`, but the dispatch logic is pure
+ * data-in / data-out and worth testing in isolation.
+ *
+ * Three inputs:
+ *   - `rowsAvailable` — the rule-type rows that `buildRuleTypeOptions`
+ *     produced, possibly with the "strip tool summary" mutation applied
+ *   - `coverage` — whether the allow-save / deny-save flow should
+ *     fall back to a plain deny when no rows are available
+ *   - `userChose` — `undefined` if the user pressed Esc, or a string
+ *     (the selected label) if they picked a row
+ *
+ * Returns the next action: a chosen `row`, a `back` (Esc), a
+ * `fallBackToDeny` (empty rows + coverage filtered), or a
+ * `cancel` (empty rows + no coverage filter — a programming error).
+ *
+ * Exported for unit tests in `policy-ask-modal.test.ts`.
+ */
+export type RuleTypeSubmenuResult =
+  | { kind: "row"; row: RuleTypeRow }
+  | { kind: "back" }
+  | { kind: "fallBackToDeny" }
+  | { kind: "cancel" }
+
+export function pickRuleTypeReducer(
+  rowsAvailable: RuleTypeRow[],
+  coverage: CoverageReport,
+  userChose: string | undefined,
+): RuleTypeSubmenuResult {
+  if (rowsAvailable.length === 0) {
+    // Two cases per the original logic:
+    //   (a) coverage-filtered (allow-save): every layer is already
+    //       covered. Fall back to a plain deny so the user has
+    //       somewhere to go.
+    //   (b) coverage-not-filtered (deny-save): we passed
+    //       `toolCovered: false` so buildRuleTypeOptions must return
+    //       at least the tool row. Empty set = programming error; cancel.
+    if (coverage.aspectCovered || coverage.toolCovered) {
+      return { kind: "fallBackToDeny" }
+    }
+    return { kind: "cancel" }
+  }
+  if (userChose === undefined) return { kind: "back" }
+  const ruleRow = rowsAvailable.find((r) => r.label === userChose)
+  if (!ruleRow) return { kind: "back" }
+  return { kind: "row", row: ruleRow }
+}
+
 async function pickRuleType(
   ctx: ExtensionContext,
   args: PolicyAskArgs,
@@ -415,15 +465,14 @@ async function pickRuleType(
       //   (b) deny-save: we explicitly passed `toolCovered: false`,
       //       so buildRuleTypeOptions must return at least the tool
       //       row. Empty set = programming error; cancel.
-      if (opts.coverage.aspectCovered || opts.coverage.toolCovered) {
+      // The reducer classifies this case too, but the side-effect
+      // (calling pickDenyReason) needs the ctx, so we keep the side
+      // effect here and use the reducer for the data-only check.
+      const emptyDecision = pickRuleTypeReducer([], opts.coverage, undefined)
+      if (emptyDecision.kind === "fallBackToDeny") {
         const denyResult = await pickDenyReason(ctx, undefined)
-        switch (denyResult.kind) {
-          case "back":
-            continue // re-show the (still empty) rule-type submenu
-          case "cancel":
-          case "result":
-            return denyResult
-        }
+        if (denyResult.kind === "back") continue
+        return denyResult
       }
       return { kind: "cancel" }
     }
@@ -432,10 +481,21 @@ async function pickRuleType(
       `${opts.promptPrefix}\n\nTool: ${opts.toolName}\nScope: ${opts.scope}`,
       ruleTypeLabels,
     )
-    if (ruleChosen === undefined) return { kind: "back" }
-    const ruleRow = rows[ruleTypeLabels.indexOf(ruleChosen)]
-    if (!ruleRow) return { kind: "back" }
-    return { kind: "row", row: ruleRow }
+    // Dispatch through the pure reducer so the edge cases (Esc, missing
+    // row) are unit-testable without driving the TUI.
+    const decision = pickRuleTypeReducer(rows, opts.coverage, ruleChosen)
+    switch (decision.kind) {
+      case "cancel":
+      case "fallBackToDeny":
+        // These branches are only reachable when rows is empty (the
+        // pre-check above handles them); the non-empty path only
+        // returns row or back.
+        return { kind: "cancel" }
+      case "back":
+        return { kind: "back" }
+      case "row":
+        return { kind: "row", row: decision.row }
+    }
   }
 }
 

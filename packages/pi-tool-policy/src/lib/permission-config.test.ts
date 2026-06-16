@@ -391,6 +391,80 @@ describe("allowedPaths", () => {
   })
 })
 
+describe("regex pattern validation", () => {
+  it("warns when a regex aspect pattern is invalid", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          default: {
+            description: "test",
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: { regex: { patterns: { "[unclosed": "deny", "^.+\\.ts$": "allow" } } },
+          },
+        },
+      }),
+    )
+    const { warnings } = await loadConfig(tmpCwd)
+    // The invalid pattern is reported; the valid one is not.
+    expect(warnings.some((w) => w.includes("Invalid regex pattern") && w.includes("[unclosed"))).toBe(true)
+    expect(warnings.some((w) => w.includes("Invalid regex pattern") && w.includes("^.+\\.ts$"))).toBe(false)
+  })
+
+  it("names the mode and the regex aspect in the warning", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          plan: {
+            description: "plan",
+            defaultDecision: "deny",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: { regex: { patterns: { "(unbalanced": "deny" } } },
+          },
+        },
+      }),
+    )
+    const { warnings } = await loadConfig(tmpCwd)
+    const regexWarn = warnings.find((w) => w.includes("Invalid regex pattern"))
+    expect(regexWarn).toBeDefined()
+    expect(regexWarn).toContain("plan")
+    expect(regexWarn).toContain("regex")
+    expect(regexWarn).toContain("(unbalanced")
+  })
+
+  it("does not warn on non-regex aspects (path / glob patterns are not compiled as RegExp)", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          default: {
+            description: "test",
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {
+              // `*.env` is a valid picomatch glob but NOT a valid regex
+              // (`*` outside a quantifier). The validation must not warn
+              // on the `path` aspect because it uses picomatch, not RegExp.
+              path: { patterns: { "*.env": "deny" } },
+              url: { patterns: { "https://*.example.com/*": "allow" } },
+            },
+          },
+        },
+      }),
+    )
+    const { warnings } = await loadConfig(tmpCwd)
+    expect(warnings.some((w) => w.includes("Invalid regex pattern"))).toBe(false)
+  })
+})
+
 describe("tool-policy extension does NOT read the legacy config paths", () => {
   it("contains no string 'runner.json' in src/lib/*.ts (excluding tests)", async () => {
     const { readdir, readFile, stat } = await import("node:fs/promises")

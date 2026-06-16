@@ -13,25 +13,47 @@ import { buildDenyReason } from "../lib/policy.ts"
 import { RuntimeGrants } from "../lib/runtime-grants.ts"
 import { applyTaggerRules } from "../lib/tagging-rules.ts"
 import { type AggregateResult, aggregateToolMetadata } from "../lib/tool-metadata.ts"
-import type { Config, PolicyDecision, Verdict } from "../lib/types.ts"
+import type { Config, PolicyDecision, ResolvedToolMetadata, Verdict } from "../lib/types.ts"
+import { fieldName } from "../lib/types.ts"
 import { HOTKEY_CYCLE_MODE_KEY, YOLO_MODE } from "../lib/types.ts"
 
 const HOTKEY_CYCLE_MODE = HOTKEY_CYCLE_MODE_KEY
 
 /**
- * Extract string-typed fields from a tool call's input. Scalar strings
+ * Extract string-typed fields from a tool call's input, restricted to
+ * the fields the tool's aspect metadata actually binds. Scalar strings
  * pass through unchanged; `string[]` is joined with " " (matching the
  * matcher's `coerceForMatch` joining) so the persisted rule constrains
  * on the same string the matcher compares against.
  *
- * Returns a record of `fieldName -> joinedValue`. Non-string-typed
- * values (numbers, booleans, objects) are skipped — the rule's
+ * Fields that are NOT in any aspect binding are skipped — the matcher
+ * never sees them, so locking on them would either be a no-op (a
+ * different argv wouldn't change the verdict) or worse, would
+ * produce a lock that doesn't reflect the user's intent. Non-string-typed
+ * values (numbers, booleans, objects) are also skipped — the rule's
  * `fields` clause is a string-match map and can't constrain them.
+ *
+ * When `meta` is undefined (tool without any aspect declarations),
+ * falls back to extracting every string / string[] field, so the
+ * runtime grant still works for tools that haven't opted into the
+ * aspect metadata system.
+ *
+ * Exported for unit tests.
  */
-function extractStringFields(input: Record<string, unknown> | undefined): Record<string, string> {
+export function extractStringFields(
+  input: Record<string, unknown> | undefined,
+  meta: ResolvedToolMetadata | undefined,
+): Record<string, string> {
   if (!input) return {}
+  // If the tool has aspect metadata, restrict to bound fields. Otherwise
+  // extract every string / string[] field (back-compat with tools that
+  // haven't migrated to the aspect model).
+  const boundFields: Set<string> | null = meta
+    ? new Set(Object.values(meta.fields).flatMap((decl) => decl.fields.map(fieldName)))
+    : null
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(input)) {
+    if (boundFields && !boundFields.has(k)) continue
     if (typeof v === "string") {
       out[k] = v
     } else if (Array.isArray(v) && v.every((x): x is string => typeof x === "string")) {
@@ -213,7 +235,7 @@ export default function (pi: ExtensionAPI): void {
           runtimeGrants.grant({
             modeName: currentMode,
             toolName: event.toolName,
-            fields: extractStringFields(event.input),
+            fields: extractStringFields(event.input, toolMetadata.metadata.get(event.toolName)),
           })
           return undefined
         }

@@ -404,12 +404,22 @@ type Theme = Parameters<NonNullable<Parameters<ExtensionAPI["registerTool"]>[0][
  * Colour a single output line.
  * rg lines look like:  path/to/file.ts:42:  matched content
  * or context lines:   path/to/file.ts-42-  context content   (separator is -)
+ *
+ * Exported for unit tests. The regex accepts the ASCII hyphen-minus (U+002D)
+ * and the Unicode MINUS SIGN (U+2212) in the separator slot — some terminals
+ * or `rg` builds render the separator with the wider glyph. Keep both.
  */
-function renderLine(line: string, theme: Theme): string {
+export function renderLine(line: string, theme: Theme): string {
   // Match: <file>:<line>:<content>  or  <file>-<line>-<content>
-  const m = /^([^:\n]+)([:−\-])(\d+)([:−\-])(.*)$/.exec(line)
-  if (m) {
-    const [, file, sep1, lineNo, sep2, content] = m as unknown as [string, string, string, string, string, string]
+  const m = /^(?<file>[^:\n]+)(?<sep1>[:−\-])(?<lineNo>\d+)(?<sep2>[:−\-])(?<content>.*)$/.exec(line)
+  if (m?.groups) {
+    const { file, sep1, lineNo, sep2, content } = m.groups as {
+      file: string
+      sep1: string
+      lineNo: string
+      sep2: string
+      content: string
+    }
     const isMatch = sep1 === ":" && sep2 === ":"
     return (
       theme.fg("dim", file) +

@@ -14,7 +14,12 @@ import {
   dumpTools,
 } from "./debug-modal.ts"
 import { buildDirectoryOptions, buildDirectoryTitle } from "./directory-permissions-modal.ts"
-import { buildPolicyAskTitle, buildRuleTypeOptions, buildTopLevelOptions } from "./policy-ask-modal.ts"
+import {
+  buildPolicyAskTitle,
+  buildRuleTypeOptions,
+  buildTopLevelOptions,
+  pickRuleTypeReducer,
+} from "./policy-ask-modal.ts"
 import { buildToolPolicyOptions } from "./tool-policy-modal.ts"
 
 function makeDirectoryArgs(args: Omit<DirectoryPromptArgs, "cwd">): DirectoryPromptArgs {
@@ -566,5 +571,58 @@ describe("dumpTools", () => {
     const out = dumpTools(sampleTools, ["bash", "ripgrep"])
     const parsed = JSON.parse(out) as { enabled: boolean }[]
     expect(parsed.every((t) => t.enabled)).toBe(true)
+  })
+})
+
+describe("pickRuleTypeReducer", () => {
+  // A synthetic row set — the reducer doesn't care about the row
+  // contents, only their labels.
+  const aspectRow = {
+    value: "aspect:path",
+    label: "Aspect rule: path = .env",
+    ruleType: "aspect" as const,
+    aspectName: "path",
+  }
+  const toolRow = { value: "tool", label: "Tool rule: read", ruleType: "tool" as const }
+
+  it("returns the chosen row when the label matches", () => {
+    const result = pickRuleTypeReducer(
+      [aspectRow, toolRow],
+      { aspectCovered: false, toolCovered: false },
+      toolRow.label,
+    )
+    expect(result).toEqual({ kind: "row", row: toolRow })
+  })
+
+  it("returns 'back' when the user pressed Esc (userChose is undefined)", () => {
+    const result = pickRuleTypeReducer([aspectRow, toolRow], { aspectCovered: false, toolCovered: false }, undefined)
+    expect(result).toEqual({ kind: "back" })
+  })
+
+  it("returns 'back' when userChose doesn't match any row's label (defensive)", () => {
+    const result = pickRuleTypeReducer([aspectRow], { aspectCovered: false, toolCovered: false }, "stale label")
+    expect(result).toEqual({ kind: "back" })
+  })
+
+  it("returns 'fallBackToDeny' when rows are empty and coverage is filtered", () => {
+    const result = pickRuleTypeReducer([], { aspectCovered: true, toolCovered: false }, undefined)
+    expect(result).toEqual({ kind: "fallBackToDeny" })
+  })
+
+  it("returns 'fallBackToDeny' when rows are empty and tool coverage is filtered", () => {
+    const result = pickRuleTypeReducer([], { aspectCovered: false, toolCovered: true }, undefined)
+    expect(result).toEqual({ kind: "fallBackToDeny" })
+  })
+
+  it("returns 'cancel' when rows are empty and no coverage is filtered (programming error)", () => {
+    const result = pickRuleTypeReducer([], { aspectCovered: false, toolCovered: false }, undefined)
+    expect(result).toEqual({ kind: "cancel" })
+  })
+
+  it("prefers 'row' over 'fallBackToDeny' when rows are non-empty", () => {
+    // Empty rows + coverage filtered would be 'fallBackToDeny', but
+    // non-empty rows means we always go to the row/back/cancel branch.
+    const result = pickRuleTypeReducer([toolRow], { aspectCovered: true, toolCovered: true }, toolRow.label)
+    expect(result).toEqual({ kind: "row", row: toolRow })
   })
 })

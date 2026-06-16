@@ -135,6 +135,119 @@ describe("aggregateToolMetadata", () => {
       expect(warnings).toEqual([])
     })
   })
+
+  describe("duplicate-tool detection", () => {
+    // Two extensions declaring the same tool name should fail loudly.
+    // Last-write-wins is the current merge behavior, but silent
+    // collisions are confusing — a user adding a new tool might not
+    // realize a built-in or another extension already owns the name.
+    it("emits duplicate-tool when two package.json files declare the same tool", async () => {
+      const dirA = mkdtempSync(`${tmpdir()}/tool-policy-dup-a-`)
+      const dirB = mkdtempSync(`${tmpdir()}/tool-policy-dup-b-`)
+      try {
+        writeFileSync(
+          `${dirA}/package.json`,
+          JSON.stringify({
+            pi: { toolMetadata: { shared_tool: { tags: ["from-a"], aspects: {} } } },
+          }),
+        )
+        writeFileSync(
+          `${dirB}/package.json`,
+          JSON.stringify({
+            pi: { toolMetadata: { shared_tool: { tags: ["from-b"], aspects: {} } } },
+          }),
+        )
+        const { warnings } = await aggregateToolMetadata([
+          makeToolInfo("shared_tool", `${dirA}/extensions/shared.ts`),
+          makeToolInfo("shared_tool", `${dirB}/extensions/shared.ts`),
+        ])
+        const dups = warnings.filter((w) => w.type === "duplicate-tool")
+        expect(dups).toHaveLength(1)
+        const dup = dups[0]!
+        expect(dup.tool).toBe("shared_tool")
+        expect(dup.sources).toContain(dirA)
+        expect(dup.sources).toContain(dirB)
+        expect(dup.sources).toHaveLength(2)
+      } finally {
+        rmSync(dirA, { recursive: true, force: true })
+        rmSync(dirB, { recursive: true, force: true })
+      }
+    })
+
+    it("does not warn when a single package.json declares the same tool twice via two tools from the same source", async () => {
+      // A single extension can register multiple tools from the same source
+      // dir. The dedup-by-source-dir logic should prevent a false-positive
+      // collision (the source is the same, so it's not a conflict).
+      const dir = mkdtempSync(`${tmpdir()}/tool-policy-same-src-`)
+      try {
+        writeFileSync(
+          `${dir}/package.json`,
+          JSON.stringify({
+            pi: { toolMetadata: { tool_a: { tags: ["x"], aspects: {} } } },
+          }),
+        )
+        const { warnings } = await aggregateToolMetadata([
+          makeToolInfo("tool_a", `${dir}/extensions/a.ts`),
+          makeToolInfo("tool_b", `${dir}/extensions/b.ts`),
+        ])
+        expect(warnings.filter((w) => w.type === "duplicate-tool")).toEqual([])
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it("does not warn when a config override redeclares a tool from package.json (config layer)", async () => {
+      // Layer 3 (config override) is the explicit user-precedence layer;
+      // it should not be flagged as a collision when it touches a tool
+      // already contributed by a package.json.
+      const dir = mkdtempSync(`${tmpdir()}/tool-policy-cfg-override-`)
+      try {
+        writeFileSync(
+          `${dir}/package.json`,
+          JSON.stringify({
+            pi: { toolMetadata: { configured_tool: { tags: ["from-pkg"], aspects: {} } } },
+          }),
+        )
+        const { warnings } = await aggregateToolMetadata(
+          [makeToolInfo("configured_tool", `${dir}/extensions/cfg.ts`)],
+          { configured_tool: { tags: ["from-cfg"], aspects: {} } },
+        )
+        expect(warnings.filter((w) => w.type === "duplicate-tool")).toEqual([])
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it("emits duplicate-tool for a tool that shadows a built-in (via a package.json)", async () => {
+      // pi-tool-policy's STOCK declares `read` as a readonly path tool.
+      // If an extension declares `read` in its own package.json, that's
+      // a collision — the user almost certainly didn't mean to shadow
+      // the built-in.
+      const dir = mkdtempSync(`${tmpdir()}/tool-policy-shadow-builtin-`)
+      try {
+        writeFileSync(
+          `${dir}/package.json`,
+          JSON.stringify({
+            pi: { toolMetadata: { read: { tags: ["shadowing"], aspects: {} } } },
+          }),
+        )
+        const { warnings } = await aggregateToolMetadata([makeToolInfo("read", `${dir}/extensions/read.ts`)])
+        const dups = warnings.filter((w) => w.type === "duplicate-tool")
+        expect(dups).toHaveLength(1)
+        const dup = dups[0]!
+        expect(dup.tool).toBe("read")
+        // The STOCK built-in is pre-registered in toolSources as
+        // "<built-in>", and the user's package.json adds the second
+        // source dir. The user is the one who needs to decide whether
+        // the shadow is intentional.
+        expect(dup.sources).toContain(dir)
+        expect(dup.sources).toContain("<built-in>")
+        expect(dup.sources).toHaveLength(2)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+  })
 })
 
 // ToolMetadata type contract smoke check

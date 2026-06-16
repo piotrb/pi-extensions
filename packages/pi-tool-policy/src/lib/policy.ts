@@ -222,10 +222,11 @@ export function evaluate(
   //               modal displays as context, not a rejection message).
   const normalizedDefault: Verdict =
     typeof mode.defaultDecision === "string" ? mode.defaultDecision : mode.defaultDecision.verdict
-  // Use the explicit `explicitRuleFired` boolean as the source of
-  // truth (TS narrows `winningVerdict` to `Verdict` after closure
-  // analysis, defeating any direct undefined check).
-  const finalVerdict: Verdict = explicitRuleFired ? (winningVerdict as unknown as Verdict) : normalizedDefault
+  // When no explicit rule fired, the default wins. When an explicit rule
+  // fired, `winningVerdict` is guaranteed to be set (any `contribute()` call
+  // assigns it). The explicit `if/else` keeps the type flow obvious without
+  // the `as unknown as Verdict` double cast.
+  const finalVerdict: Verdict = explicitRuleFired ? winningVerdict! : normalizedDefault
   const reason =
     finalVerdict === "deny"
       ? buildDenyReason({

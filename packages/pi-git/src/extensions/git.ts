@@ -79,7 +79,12 @@ interface GitStatus {
   stats: { staged: number; unstaged: number; untracked: number; unmerged: number }
 }
 
-function parsePorcelainV2(lines: string[]): GitStatus {
+/**
+ * Parse `git status --porcelain=v2 --branch` output. Exported for unit tests
+ * so the per-field parsing (ordinary, renamed, unmerged, untracked) can be
+ * exercised on hand-crafted fixtures without spawning a real git process.
+ */
+export function parsePorcelainV2(lines: string[]): GitStatus {
   const branch: BranchInfo = { oid: "", head: "" }
   const entries: StatusEntry[] = []
 
@@ -92,10 +97,10 @@ function parsePorcelainV2(lines: string[]): GitStatus {
     } else if (line.startsWith("# branch.upstream ")) {
       branch.upstream = line.slice(18)
     } else if (line.startsWith("# branch.ab ")) {
-      const m = /^\+(-?\d+) -(-?\d+)$/.exec(line.slice(12))
-      if (m) {
-        branch.ahead = parseInt(m[1]!, 10)
-        branch.behind = parseInt(m[2]!, 10)
+      const m = /^\+(?<ahead>-?\d+) -(?<behind>-?\d+)$/.exec(line.slice(12))
+      if (m?.groups) {
+        branch.ahead = parseInt(m.groups.ahead!, 10)
+        branch.behind = parseInt(m.groups.behind!, 10)
       }
     }
     // ── ordinary changed entry ────────────────────────────────────────────
@@ -994,7 +999,7 @@ export default function (pi: ExtensionAPI) {
       const result = await runGit(args, ctx.cwd, signal, onUpdate)
       return appendResultNote(
         result,
-        "Do not push automatically. This was a one-time approval — ask the user before pushing again.",
+        "git_push: Do not push automatically. This was a one-time approval — ask the user before pushing again.",
       )
     },
 
@@ -1102,7 +1107,7 @@ export default function (pi: ExtensionAPI) {
       const result = await runGit(args, ctx.cwd, signal, onUpdate)
       return appendResultNote(
         result,
-        "Do not commit automatically. This was a one-time approval — ask the user before committing again.",
+        "git_commit: Do not commit automatically. This was a one-time approval — ask the user before committing again.",
       )
     },
 

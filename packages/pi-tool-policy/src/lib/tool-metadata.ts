@@ -58,7 +58,14 @@ export const STOCK_BUILTIN_TOOL_METADATA: Record<string, ToolMetadata> = {
  */
 export type ToolMetadataWarning =
   | { type: "orphan-aspect-reference"; tool: string; aspect: string }
-  | { type: "duplicate-aspect"; tool: string; aspect: string }
+  | {
+      /** Two or more `pi.toolMetadata` sources declared the same tool name.
+       *  `sources` is the list of contributing package directories (at
+       *  least two entries) so the user can find and fix the conflict. */
+      type: "duplicate-tool"
+      tool: string
+      sources: string[]
+    }
   | { type: "package-json-not-found"; tool: string; dir: string }
   | { type: "package-json-unreadable"; tool: string; dir: string; error: string }
   | { type: "package-json-invalid"; tool: string; dir: string; error: string }
@@ -114,6 +121,16 @@ export async function aggregateToolMetadata(
   // multiple tools registered from one package). The package.json's actual
   // dir may be a parent of this.
   const seenSourceDirs = new Set<string>()
+  // Track which sources contributed to each tool name, so a second
+  // extension declaring the same tool name is surfaced as a hard-fail
+  // warning (see the duplicate-tool warning below). The built-in STOCK
+  // is the baseline, so each built-in tool is pre-registered with the
+  // sentinel source "<built-in>" — this also catches the "package.json
+  // shadows a built-in" case the user almost certainly didn't intend.
+  const toolSources = new Map<string, string[]>()
+  for (const toolName of Object.keys(STOCK_BUILTIN_TOOL_METADATA)) {
+    toolSources.set(toolName, ["<built-in>"])
+  }
   for (const tool of tools) {
     const sourceInfo = tool.sourceInfo
     if (!sourceInfo.path) continue
@@ -163,6 +180,18 @@ export async function aggregateToolMetadata(
       for (const [toolName, value] of Object.entries(meta)) {
         merged[toolName] = deepMergeToolMetadata(merged[toolName], value)
         discovered[toolName] = deepMergeToolMetadata(discovered[toolName], value)
+        // Track which sources contributed to each tool name. Two
+        // different extensions declaring the same tool name is a
+        // collision — emit a hard-fail warning so the conflict is
+        // visible (and the user can fix it before the silent last-write-wins
+        // produces confusing behavior in the matcher).
+        const prev = toolSources.get(toolName)
+        if (prev && !prev.includes(pkgDir)) {
+          toolSources.set(toolName, [...prev, pkgDir])
+          warnings.push({ type: "duplicate-tool", tool: toolName, sources: [...prev, pkgDir] })
+        } else if (!prev) {
+          toolSources.set(toolName, [pkgDir])
+        }
       }
     }
   }

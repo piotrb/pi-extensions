@@ -1,7 +1,7 @@
 {
   "name": "@piotrb/pi-ripgrep",
   "version": "0.1.0",
-  "description": "Pi extension: ripgrep wrapper for file content search.",
+  "description": "Pi extension: ripgrep wrapper for file content search. Transitional — see plans/extend-and-replace-grep.md (planned name: 'grep' to replace the built-in).",
   "type": "module",
   "license": "MIT",
   "author": "Piotr Banasik",

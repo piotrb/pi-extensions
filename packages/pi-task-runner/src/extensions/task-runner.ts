@@ -134,7 +134,9 @@ function buildDescription(cwd: string): string {
 
 function detectRtk(): boolean {
   try {
-    const result = spawnSync("which", ["rtk"], { encoding: "utf-8" })
+    // Probe the binary directly instead of going through `which` — one process
+    // instead of two, and no dependence on `which` being in PATH.
+    const result = spawnSync("rtk", ["--version"], { stdio: "ignore" })
     return result.status === 0
   } catch {
     return false
