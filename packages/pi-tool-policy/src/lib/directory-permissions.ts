@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve } from "node:path"
+import { stat } from "node:fs/promises"
+import { dirname, isAbsolute, relative, resolve } from "node:path"
 
 import type { AllowedPath } from "./types.ts"
 
@@ -118,10 +119,39 @@ export interface GrantResult {
 export interface DirectoryPromptArgs {
   /** Absolute path the tool is trying to access. */
   path: string
+  /**
+   * The raw path-aspect value the tool requested, if it differs from `path`.
+   * Set when the guardrail asked for a containing directory because the
+   * original was a file (or didn't exist). Used by the modal to render a
+   * hint so the user knows what they are actually granting access to.
+   */
+  originalPath?: string
   /** Current project directory, used to render a cwd-relative path for humans. */
   cwd: string
   effectiveTags: string[]
   grantedTags: string[]
+}
+
+/**
+ * Best-effort classification of an absolute path. Used to decide whether the
+ * guardrail should ask for access to the path itself (a directory) or to
+ * the containing directory (a file, or missing — creating a file requires
+ * write access to its parent).
+ *
+ * TOCTOU is benign here: this only picks which path to prompt for; the
+ * authoritative access check happens when the tool actually runs, and the
+ * parent directory is the correct grant whether the file exists at stat
+ * time, at exec time, or only at one of them.
+ */
+async function classifyPath(absPath: string): Promise<"directory" | "file" | "missing"> {
+  try {
+    const s = await stat(absPath)
+    return s.isDirectory() ? "directory" : "file"
+  } catch {
+    // ENOENT, EACCES, broken symlink — all surface here. We can't grant
+    // access to a path we can't see, so fall back to the parent directory.
+    return "missing"
+  }
 }
 
 /** The directory-permissions modal opener signature (consumed by the guardrail). */
@@ -182,26 +212,53 @@ export async function checkAndPrompt(
     }
   }
 
-  // Collect all path-bound values (string or string[]).
-  const absPaths: string[] = []
+  // Collect all path-bound values (string or string[]). Each raw value
+  // is resolved to an absolute path, then mapped to the *container* the
+  // guardrail should grant: the directory itself when the path points
+  // to a directory, or its parent when it points to a file (or doesn't
+  // exist — creating a file requires write access to its parent).
+  // The original (pre-container) path is tracked alongside so the modal
+  // can show the user what the tool actually requested.
+  interface Collected {
+    container: string
+    original: string
+  }
+  const collected: Collected[] = []
   for (const field of pathFields) {
     const value = args[field]
+    const rawValues: string[] = []
     if (typeof value === "string") {
-      absPaths.push(isAbsolute(value) ? value : resolve(ctx.cwd, value))
+      rawValues.push(value)
     } else if (Array.isArray(value)) {
       for (const v of value) {
-        if (typeof v === "string") {
-          absPaths.push(isAbsolute(v) ? v : resolve(ctx.cwd, v))
-        }
+        if (typeof v === "string") rawValues.push(v)
       }
+    }
+    for (const raw of rawValues) {
+      const abs = isAbsolute(raw) ? raw : resolve(ctx.cwd, raw)
+      const kind = await classifyPath(abs)
+      const container = kind === "directory" ? abs : dirname(abs)
+      collected.push({ container, original: abs })
     }
   }
 
-  for (const abs of absPaths) {
+  // Deduplicate by container — multiple files in the same directory
+  // should produce a single prompt, not N. Different originals under
+  // the same container collapse onto one grant.
+  const seen = new Set<string>()
+  const absPaths: { container: string; original: string }[] = []
+  for (const entry of collected) {
+    if (seen.has(entry.container)) continue
+    seen.add(entry.container)
+    absPaths.push(entry)
+  }
+
+  for (const { container: abs, original } of absPaths) {
     let result = state.isGranted(abs, effectiveTags)
     while (!result.granted) {
       const modalResult = await openModal({
         path: abs,
+        originalPath: original === abs ? undefined : original,
         cwd: ctx.cwd,
         effectiveTags,
         grantedTags: effectiveTags.filter((t) => !result.missingTags.includes(t)),

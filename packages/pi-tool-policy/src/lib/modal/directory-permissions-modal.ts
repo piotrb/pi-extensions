@@ -71,13 +71,20 @@ export async function openDirectoryPermissionsModal(
 /** Build the prompt title for the inline directory-permissions selector. */
 export function buildDirectoryTitle(args: DirectoryPromptArgs): string {
   const tagPart = args.effectiveTags.length > 0 ? args.effectiveTags.join(", ") : "(none)"
-  return [
-    "Tool is trying to access a directory outside the project.",
+  const lines = [
+    "Tool is trying to access a path outside the project.",
     `Path: ${formatDirectoryPath(args.path, args.cwd)}`,
-    `Tool tags: ${tagPart}`,
-    "",
-    "Pick an action:",
-  ].join("\n")
+  ]
+  // When the guardrail asked for a containing directory (because the
+  // original tool request targeted a file or a non-existent path), show
+  // the original so the user knows what they are actually granting
+  // access to. Skipped when the container IS the original (i.e. the
+  // tool requested the directory directly).
+  if (args.originalPath && args.originalPath !== args.path) {
+    lines.push(`Original: \`${args.originalPath}\``)
+  }
+  lines.push(`Tool tags: ${tagPart}`, "", "Pick an action:")
+  return lines.join("\n")
 }
 
 /** Render cwd-relative and absolute forms together, e.g. ``../foo` (`/abs/foo`)``. */

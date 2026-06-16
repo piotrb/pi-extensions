@@ -36,7 +36,7 @@ describe("buildDirectoryTitle", () => {
       }),
     )
     expect(title).toBe(
-      "Tool is trying to access a directory outside the project.\n" +
+      "Tool is trying to access a path outside the project.\n" +
         "Path: `../parent` (`/parent`)\n" +
         "Tool tags: readonly\n\n" +
         "Pick an action:",
