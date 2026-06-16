@@ -9,6 +9,8 @@
  *   brew install ripgrep  |  apt install ripgrep  |  cargo install ripgrep
  */
 
+import { isAbsolute, resolve } from "node:path"
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { Text } from "@earendil-works/pi-tui"
 import { spawnStreaming } from "@piotrb/pi-extension-utils"
@@ -21,6 +23,7 @@ const DEFAULT_VISIBLE_LINES = 30
 interface RgDetails {
   pattern: string
   paths: string[]
+  cwd: string
   totalLines: number
   streaming?: boolean
   exitCode: number | null
@@ -48,7 +51,15 @@ export default function (pi: ExtensionAPI) {
       }),
       paths: Type.Optional(
         Type.Array(Type.String(), {
-          description: "Files or directories to search (default: current working directory).",
+          description: "Files or directories to search (default: cwd).",
+        }),
+      ),
+      cwd: Type.Optional(
+        Type.String({
+          description:
+            "Working directory for the ripgrep process. Relative paths resolve against " +
+            "the session's ctx.cwd. Defaults to ctx.cwd when omitted. The directory must " +
+            "exist; the spawn will fail otherwise.",
         }),
       ),
 
@@ -186,6 +197,8 @@ export default function (pi: ExtensionAPI) {
     // ── execute ──────────────────────────────────────────────────────────────
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      const resolvedCwd = params.cwd ? (isAbsolute(params.cwd) ? params.cwd : resolve(ctx.cwd, params.cwd)) : ctx.cwd
+
       const args: string[] = []
 
       // Always emit line numbers (suppressed only if noLineNumber)
@@ -233,7 +246,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const { lines, exitCode, spawnError } = await spawnStreaming("rg", args, {
-        cwd: ctx.cwd,
+        cwd: resolvedCwd,
         signal,
         notFoundHint: "brew install ripgrep  |  apt install ripgrep  |  cargo install ripgrep",
         onLines: (accumulated) => {
@@ -242,6 +255,7 @@ export default function (pi: ExtensionAPI) {
             details: {
               pattern: params.pattern,
               paths: params.paths ?? [],
+              cwd: resolvedCwd,
               totalLines: accumulated.length,
               exitCode: null,
               streaming: true,
@@ -253,7 +267,7 @@ export default function (pi: ExtensionAPI) {
       if (spawnError) {
         return {
           content: [{ type: "text" as const, text: spawnError }],
-          details: { pattern: params.pattern, paths: params.paths ?? [], totalLines: 0, exitCode: -1 },
+          details: { pattern: params.pattern, paths: params.paths ?? [], cwd: resolvedCwd, totalLines: 0, exitCode: -1 },
           isError: true,
         }
       }
@@ -265,6 +279,7 @@ export default function (pi: ExtensionAPI) {
         details: {
           pattern: params.pattern,
           paths: params.paths ?? [],
+          cwd: resolvedCwd,
           totalLines: lines.length,
           exitCode,
         },
@@ -314,6 +329,9 @@ export default function (pi: ExtensionAPI) {
 
       if (args.paths && args.paths.length > 0) {
         text += theme.fg("dim", "  " + args.paths.join(" "))
+      }
+      if (args.cwd) {
+        text += theme.fg("muted", `  (cwd: ${args.cwd})`)
       }
 
       return new Text(text, 0, 0)

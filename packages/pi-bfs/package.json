@@ -16,7 +16,22 @@
   "pi": {
     "extensions": [
       "./src/extensions/bfs.ts"
-    ]
+    ],
+    "toolMetadata": {
+      "bfs": {
+        "tags": [
+          "readonly"
+        ],
+        "aspects": {
+          "path": {
+            "mode": "path[]",
+            "fields": [
+              "paths"
+            ]
+          }
+        }
+      }
+    }
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

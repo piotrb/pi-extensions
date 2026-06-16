@@ -27,7 +27,73 @@
   "pi": {
     "extensions": [
       "./src/extensions/pfs.ts"
-    ]
+    ],
+    "toolMetadata": {
+      "pfs_unlink": {
+        "tags": [
+          "mutating"
+        ],
+        "aspects": {
+          "path": {
+            "mode": "path",
+            "fields": [
+              "path"
+            ]
+          }
+        }
+      },
+      "pfs_rmdir": {
+        "tags": [
+          "mutating"
+        ],
+        "aspects": {
+          "path": {
+            "mode": "path",
+            "fields": [
+              "path"
+            ]
+          }
+        }
+      },
+      "pfs_cp": {
+        "tags": [
+          "mutating"
+        ],
+        "aspects": {
+          "source": {
+            "mode": "path",
+            "fields": [
+              "source"
+            ]
+          },
+          "destination": {
+            "mode": "path",
+            "fields": [
+              "destination"
+            ]
+          }
+        }
+      },
+      "pfs_mv": {
+        "tags": [
+          "mutating"
+        ],
+        "aspects": {
+          "source": {
+            "mode": "path",
+            "fields": [
+              "source"
+            ]
+          },
+          "destination": {
+            "mode": "path",
+            "fields": [
+              "destination"
+            ]
+          }
+        }
+      }
+    }
   },
   "keywords": [
     "pi-package",

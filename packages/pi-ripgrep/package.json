@@ -27,7 +27,23 @@
   "pi": {
     "extensions": [
       "./src/extensions/ripgrep.ts"
-    ]
+    ],
+    "toolMetadata": {
+      "ripgrep": {
+        "tags": [
+          "readonly"
+        ],
+        "aspects": {
+          "path": {
+            "mode": "path[]",
+            "fields": [
+              "paths",
+              "cwd"
+            ]
+          }
+        }
+      }
+    }
   },
   "keywords": [
     "pi-package",

@@ -27,7 +27,119 @@
   "pi": {
     "extensions": [
       "./src/extensions/git.ts"
-    ]
+    ],
+    "toolMetadata": {
+      "git_status": {
+        "tags": [
+          "readonly"
+        ],
+        "aspects": {
+          "path": {
+            "mode": "path[]",
+            "fields": [
+              "paths"
+            ]
+          }
+        }
+      },
+      "git_add": {
+        "tags": [
+          "mutating"
+        ],
+        "aspects": {
+          "path": {
+            "mode": "path[]",
+            "fields": [
+              "paths"
+            ]
+          }
+        }
+      },
+      "git_rm": {
+        "tags": [
+          "mutating"
+        ],
+        "aspects": {
+          "path": {
+            "mode": "path[]",
+            "fields": [
+              "paths"
+            ]
+          }
+        }
+      },
+      "git_mv": {
+        "tags": [
+          "mutating"
+        ],
+        "aspects": {
+          "source": {
+            "mode": "path[]",
+            "fields": [
+              "source"
+            ]
+          },
+          "destination": {
+            "mode": "path",
+            "fields": [
+              "destination"
+            ]
+          }
+        }
+      },
+      "git_restore": {
+        "tags": [
+          "mutating"
+        ],
+        "aspects": {
+          "path": {
+            "mode": "path[]",
+            "fields": [
+              "paths"
+            ]
+          }
+        }
+      },
+      "git_diff": {
+        "tags": [
+          "readonly"
+        ],
+        "aspects": {
+          "path": {
+            "mode": "path[]",
+            "fields": [
+              "paths"
+            ]
+          }
+        }
+      },
+      "git_log": {
+        "tags": [
+          "readonly"
+        ],
+        "aspects": {
+          "path": {
+            "mode": "path[]",
+            "fields": [
+              "paths"
+            ]
+          }
+        }
+      },
+      "git_commit": {
+        "tags": [
+          "mutating"
+        ],
+        "aspects": {}
+      },
+      "git_push": {
+        "tags": [
+          "mutating",
+          "network"
+        ],
+        "aspects": {}
+      }
+    }
   },
   "keywords": [
     "pi-package",
