@@ -1,17 +1,11 @@
 ---
 name: pi-extension-toolchain
-description: TypeScript + ESLint + Prettier toolchain for this pnpm workspace — tsconfig hierarchy, ESLint config, script naming conventions, and key gotchas.
+description: TypeScript + ESLint + Prettier toolchain for this pnpm workspace — tsconfig hierarchy, ESLint config, script naming conventions, and key gotchas. Use when setting up or auditing the build toolchain for any package, or when chasing a toolchain failure.
 ---
 
-# Pi Extension Toolchain
+You are setting up or auditing the build toolchain for any package in this workspace. The toolchain is pnpm + turbo on the outside, TypeScript + ESLint + Prettier on the inside. The configurations are root-level and glob to all packages in one process.
 
-## When to Use
-
-When setting up or auditing the build toolchain for any package in this workspace.
-
-## Key Facts
-
-### tsconfig hierarchy
+## tsconfig hierarchy
 
 `tsconfig.base.json` at the repo root holds all shared `compilerOptions`. Each package's `tsconfig.json` extends it and adds only its own `include`:
 
@@ -35,7 +29,7 @@ Never put `compilerOptions` in a per-package tsconfig — put them in the base.
 - `"noFallthroughCasesInSwitch": true`
 - `"forceConsistentCasingInFileNames": true`
 
-### ESLint (`eslint.config.mjs`)
+## ESLint (`eslint.config.mjs`)
 
 Single root config; globs `**/*.ts` so it covers all packages in one process.
 
@@ -69,7 +63,7 @@ Run with `--max-warnings=0` so warnings fail CI.
 
 **Performance debugging:** set `TIMING=1` in the env to get a top-10 rule-by-rule time report (e.g. `run(cmd: ["pnpm", "run", "lint"], env: { TIMING: "1" })`). First-run time is dominated by the type-checked rules (`no-unsafe-assignment`, `no-unsafe-return`, `no-floating-promises`, `no-base-to-string`) — these can't be loosened without losing real safety.
 
-### Turbo task graph (`turbo.json`)
+## Turbo task graph (`turbo.json`)
 
 Single source of truth for the four developer-facing tasks:
 
@@ -88,7 +82,7 @@ The `//` prefix marks a **root task** — runs once at the repo root, not per pa
 
 **Single-package check:** `pnpm turbo run typecheck test --filter=<pkg>`. Format+lint still need the full `pnpm run check` because they're root-globbed.
 
-### Script naming conventions
+## Script naming conventions
 
 | Script         | What it does                                              |
 | -------------- | --------------------------------------------------------- |
@@ -109,3 +103,9 @@ The `//` prefix marks a **root task** — runs once at the repo root, not per pa
 - Regex replace callbacks have `any`-typed capture params — annotate them: `(_m: string, branch: string, sha: string) =>`.
 - `noUncheckedIndexedAccess` consequences: `result.content[0]!` (tool content array is always non-empty), `m[1]!` for regex captures, `entries[i]!` in indexed loops. The `no-non-null-assertion` rule is disabled globally for this reason.
 - `consistent-type-imports` with `fixStyle: "separate-type-imports"` means `import { type Foo, Bar }` must become two lines: `import type { Foo }` and `import { Bar }`.
+
+## What this skill does not do
+
+- It does not cover the per-package shape (canonical `package.json`, `tsconfig.json`, etc.) — see `pi-package-scaffold`.
+- It does not cover the monorepo overview or the project map — see `pi-monorepo-overview`.
+- It does not cover skill authoring or frontmatter rules — see `pi-skill-frontmatter-colon-rule` and the `learn` skill.

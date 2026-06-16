@@ -16,7 +16,7 @@ pnpm --filter <pkg> run test
 pnpm run check
 ```
 
-`check` shape: Turbo runs the four tasks declared in `turbo.json` — `//#format:check` and `//#lint` once at the repo root, then `typecheck` and `test` per package in parallel. Cache hits make repeat runs near-instant. See `.ai/pi-extension-toolchain.md` for the full Turbo conventions.
+`check` shape: Turbo runs the four tasks declared in `turbo.json` — `//#format:check` and `//#lint` once at the repo root, then `typecheck` and `test` per package in parallel. Cache hits make repeat runs near-instant. See @.agents/skills/pi-extension-toolchain/SKILL.md for the full Turbo conventions.
 
 If `pnpm check` is not available (e.g. `node_modules` not installed), run:
 
@@ -56,6 +56,23 @@ packages/
       permissions.ts         — pattern-based rule matching
       runner-config.ts       — config loading and persistence
       runner-modal.ts        — TUI modal for managing permissions
+  pi-tool-policy/
+    src/extensions/
+      tool-policy.ts         — mode hotkey, /tool_policy command, tool_call gate
+    src/lib/
+      types.ts               — v2 type definitions (Mode, AnyVerdict, RuleResult, …)
+      aspects.ts             — matchAspect() for path/url/bash/glob/regex
+      policy.ts              — per-mode single-pass matcher
+      permission-config.ts   — loadConfig() with extends deep-merge + cycle detection
+      tool-metadata.ts       — aggregateToolMetadata() (built-in + package.json + config)
+      tagging-rules.ts       — applyTaggerRules() (augments effective tag set)
+      directory-permissions.ts — DirectoryPermissionsState + checkAndPrompt guardrail
+      mode-controller.ts     — ModeController (cycle/setMode/additionalInstructions)
+      modal/
+        directory-permissions-modal.ts — tag-aware prompt + custom-path sub-modal
+        tool-policy-modal.ts           — mode switcher + warnings viewer
+    schemas/
+      tool-policy.schema.json — JSON Schema 2020-12 for the config
 ```
 
 Each `packages/<name>/` is its own npm package with its own `package.json`, `tsconfig.json`, and `README.md`. Extensions list their entry point under `"pi": { "extensions": [...] }` in their `package.json`.
@@ -68,7 +85,7 @@ Each `packages/<name>/` is its own npm package with its own `package.json`, `tsc
 - **Module style**: ESM only (`"type": "module"`). NodeNext module resolution — local imports keep `.ts` extensions (pi's runtime handles them via jiti).
 - **Shared tsconfig**: each package's `tsconfig.json` extends `../../tsconfig.base.json` with `"include": ["src/**/*"]`. Do not duplicate compilerOptions.
 - **File operations**: prefer `pfs_mv`, `pfs_cp`, `pfs_unlink`, `pfs_rmdir` for filesystem moves/deletes. Use `git_mv` only when you explicitly need git to track the rename in the index.
-- **Skills**: any change to `.ai/*.md` MUST update the Skills section below in the same commit. The `.rpiv/guidance/` tree has its own maintenance workflow (run `annotate-guidance`) and is not covered by this rule. See @.ai/skill-index-maintenance.md.
+- **Skills**: any change to a learning under `.agents/skills/` MUST keep `.agents/learning-index.md` in sync. The `learning-management` skill owns the storage layout, dispatch index, and index-sync procedure. The `.rpiv/guidance/` tree has its own maintenance workflow and is not covered by this rule.
 - **Tests assert behavior, not data, and do not duplicate the producer.** When lifting a function to a shared lib (`pi-extension-utils`, etc.), delete the duplicate tests in the consumer — the lib's own tests cover the lifted function. The consumer's test file covers only consumer-specific surface (how it composes the lib, its own config schema, the rules it derives). A test that compares an object to a hardcoded literal of itself is documentation, not verification; if it would still pass with `() => undefined` swapped in, remove or rewrite it. Loader/merger tests exercise the loader/merger logic, not the data shape it returns.
 
 ### Tool surface rules
@@ -83,7 +100,7 @@ These are derived from repeated cross-session corrections. Read this section bef
 - **Try `eslint --fix` before manual edits.** For import order, type-imports, and formatting, run `pnpm turbo //#lint` (or `eslint . --fix` on a file) before hand-editing. Most of these are auto-fixed.
 - **Never auto-run interactive or user-facing tools.** `changeset`, `npm login`, anything that prompts — leave it for the user. The agent runs non-interactive commands only.
 - **Verify after every edit and every retry.** `edit` only checks that `oldText` was found — not that the result is correct. After every `edit` call, read the affected region (5-10 lines) to confirm the file's literal state. When retrying a failing `run` or any other call, compare the new arguments literally to the previous attempt; if identical, the mistake is unchanged and retrying the same form is wasted work.
-- **Read `@`-referenced files directly.** When a user message contains `@<path>` (e.g. `@AGENTS.md`, `@about-turbo.md`, `@.ai/skill.md`), the path is the literal file location — read it with the `read` tool. Do **not** dispatch a search subagent, do not guess the path, do not glob for it. `@` references from a user message resolve the same way they resolve inside `AGENTS.md` (relative to the file the reference appears in, or project root for direct user input). The `read` tool is always the right call.
+- **Read `@`-referenced files directly.** When a user message contains `@<path>` (e.g. `@AGENTS.md`, `@about-turbo.md`, `@.agents/learning-index.md`), the path is the literal file location — read it with the `read` tool. Do **not** dispatch a search subagent, do not guess the path, do not glob for it. `@` references from a user message resolve the same way they resolve inside `AGENTS.md` (relative to the file the reference appears in, or project root for direct user input). The `read` tool is always the right call.
 
 ### Skill scope rules
 
@@ -112,11 +129,19 @@ pnpm --filter <pkg> run test             # single-package test
 
 **Core (always loaded):**
 
-@.ai/pi-extension-toolchain.md
-@.ai/skill-index-maintenance.md
-@.rpiv/guidance/architecture.md
+@.agents/learning-index.md
 
 **Secondary (load when relevant):**
 
-- `.ai/pi-npm-publishing.md` — load when preparing to publish packages to npm, configuring scopes, or setting up publishConfig
+- Skills are dispatched by description from `.agents/learning-index.md`. The index lists every learning with a one-paragraph routing description; load on demand with the `read` tool.
 - `.rpiv/guidance/` — read on demand when entering a package or layer; the root file lists what's available
+
+## Emergency escape: `__yolo__` mode in `pi-tool-policy`
+
+If a bug in `pi-tool-policy` is blocking the agent from working (e.g. a malformed config, a `tagRules` access crash, an `evaluate` regression), switch the policy extension into its synthetic **YOLO mode** to fully disable the gate:
+
+- Hotkey: press **Alt+M** until the status bar reads `mode: __yolo__ (EMERGENCY OFF)`.
+- Or: run `/tool_policy` and pick `⚠ ○ __yolo__` (the YOLO entry is the last option, marked with a warning icon).
+- Or: from any list, the YOLO mode is auto-injected into every `loadConfig()` call and listed last in `modeOrder` so the cycle wraps to it as a last resort.
+
+When YOLO is active the `tool_call` handler returns `undefined` immediately — no policy check, no directory guard, no ask modal. The user can repair the config and cycle back to a normal mode (`default` / `plan` / `edit`) without reloading the session. YOLO is **not** user-configurable; it lives in code at `YOLO_MODE` in `packages/pi-tool-policy/src/lib/types.ts`.

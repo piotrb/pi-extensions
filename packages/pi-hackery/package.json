@@ -1,0 +1,47 @@
+{
+  "name": "@piotrb/pi-hackery",
+  "version": "0.1.0",
+  "description": "Pi extension: experimental tooling and utilities (no tools registered yet).",
+  "type": "module",
+  "license": "MIT",
+  "author": "Piotr Banasik",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/piotrb/pi-extensions.git"
+  },
+  "bugs": {
+    "url": "https://github.com/piotrb/pi-extensions/issues"
+  },
+  "homepage": "https://github.com/piotrb/pi-extensions#readme",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "files": [
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extensions/hackery.ts"
+    ],
+    "_comment": "Placeholder extension — no tools are registered yet. The package is a sandbox for experimental tooling, utilities, and skills. The `pi.skills` field below tells skill discovery where to find skills for this package.",
+    "skills": ["./skills"]
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "pi-hackery"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.7"
+  }
+}

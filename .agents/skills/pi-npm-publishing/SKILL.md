@@ -1,24 +1,18 @@
 ---
 name: pi-npm-publishing
-description: npm publishing conventions and release workflow for @piotrb/pi-* extension packages — scope, access, versioning with changesets, OIDC trusted publishing, and developer release flow.
+description: npm publishing conventions and release workflow for @piotrb/pi-* extension packages — scope, access, versioning with changesets, OIDC trusted publishing, and developer release flow. Use when preparing a release, declaring a changeset, configuring npm Trusted Publishing for a new package, or checking whether a package should be published.
 ---
 
-# Pi Extension npm Publishing
+You are preparing a release, declaring a changeset, configuring npm Trusted Publishing for a new package, or checking whether a package should be published.
 
-## When to Use
-
-When preparing a release, declaring a changeset, configuring npm Trusted Publishing for a new package, or checking whether a package should be published.
-
-## Key Facts
-
-### Scope
+## Scope
 
 All published packages use the `@piotrb` scope: `@piotrb/pi-git`, `@piotrb/pi-ripgrep`, etc.
 
 - `@piotrb` is a personal npm scope automatically associated with the `piotrb` npm account. No separate creation or fee needed.
 - The `pi-` prefix is kept even within the scoped name so the package is self-describing without the README: `@piotrb/pi-git` clearly means "pi agent git extension".
 
-### Access — scoped packages are private by default
+## Access — scoped packages are private by default
 
 Add this to every publishable package's `package.json`:
 
@@ -28,7 +22,7 @@ Add this to every publishable package's `package.json`:
 
 Without it, `pnpm publish` will fail or create a private package (which requires a paid npm org plan). The `publishConfig` field is the right approach — it's explicit and doesn't require remembering a CLI flag.
 
-### Shipping TypeScript source
+## Shipping TypeScript source
 
 These packages ship `.ts` source files, not compiled JS. Pi loads extensions via jiti, which executes TypeScript directly at runtime. No build step is needed.
 
@@ -37,7 +31,7 @@ These packages ship `.ts` source files, not compiled JS. Pi loads extensions via
 "exports": { ".": "./src/extension-utils.ts" }
 ```
 
-### What to publish
+## What to publish
 
 | Package                | Publish?               | Notes                                              |
 | ---------------------- | ---------------------- | -------------------------------------------------- |
@@ -130,3 +124,9 @@ After the first manual `pnpm -r publish --access public` seeds each package on n
 - A package version is immutable on npm. "Rollback" means publishing a new version with a fix — changesets handles this naturally.
 - A pre-release channel (`canary` / `alpha` / `beta`) is available via `pnpm changeset pre enter <tag>` and `pnpm changeset pre exit`. The release workflow publishes to the matching non-`latest` npm dist-tag.
 - The release workflow's `cancel-in-progress: false` is intentional — a release in flight should finish even if a follow-up push lands.
+
+## What this skill does not do
+
+- It does not cover the per-package shape — see `pi-package-scaffold`.
+- It does not cover the monorepo overview — see `pi-monorepo-overview`.
+- It does not cover the build toolchain — see `pi-extension-toolchain`.
