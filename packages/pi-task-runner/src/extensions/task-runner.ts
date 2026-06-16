@@ -45,7 +45,7 @@ import { progressiveKill, spawnStreaming } from "@piotrb/pi-extension-utils"
 import minimist from "minimist"
 import { Type } from "typebox"
 
-import { checkRules, type RuleScope } from "../lib/permissions.ts"
+import { type RuleLevel, type RuleScope } from "../lib/permissions.ts"
 import { loadRules, readRtkEnabled, removeRuleFromFile, SCOPE_FILES, writeRuleToFile } from "../lib/runner-config.ts"
 import { openRunnerModal } from "../lib/runner-modal.ts"
 
@@ -281,9 +281,22 @@ export default function (pi: ExtensionAPI) {
           "info",
         )
       }
-      const verdict = checkRules(params.cmd, rules)
+      // ─── DISABLED (TEMP) ───────────────────────────────────────────────────
+      // The permission system is currently disabled: every command is
+      // forced to "allow" so the runner is a no-op gate. The rule
+      // loading above (and the /runner modal) still run so the
+      // config files are migrated and the user can still inspect
+      // their rules, but no command is ever blocked or asked about.
+      // Revert the line below to `const verdict = checkRules(params.cmd, rules)`
+      // to re-enable.
+      const verdict: RuleLevel = "allow"
+      // ─── /DISABLED ────────────────────────────────────────────────────────
 
       // ── permission check ────────────────────────────────────────────────────
+      // While the permission system is disabled (see DISABLED block
+      // above), verdict is always "allow" so this branch is dead.
+      // The comparison stays so re-enabling is a one-line revert.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (verdict !== "allow") {
         let errorLines: string[]
         if (verdict === "ask") {

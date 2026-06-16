@@ -27,7 +27,22 @@
   "pi": {
     "extensions": [
       "./src/extensions/task-runner.ts"
-    ]
+    ],
+    "toolMetadata": {
+      "run": {
+        "tags": [
+          "execution"
+        ],
+        "aspects": {
+          "command": {
+            "mode": "bash",
+            "fields": [
+              "cmd"
+            ]
+          }
+        }
+      }
+    }
   },
   "keywords": [
     "pi-package",
