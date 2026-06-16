@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/piotrb/pi-extensions/schemas/tool-policy.schema.json",
+  "title": "Pi Tool Policy",
+  "description": "4-layer permission policy for pi's tool_call events.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "modeOrder": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "modes": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/Mode" }
+    },
+    "allowedPaths": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/AllowedPath" }
+    },
+    "taggingRules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/TaggerRule" }
+    },
+    "toolMetadata": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/ToolMetadata" }
+    }
+  },
+  "required": ["modeOrder", "modes"],
+  "$defs": {
+    "AnyVerdict": {
+      "oneOf": [
+        { "enum": ["allow", "ask", "deny"] },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "verdict": { "enum": ["allow", "ask", "deny"] },
+            "reason": { "type": "string" }
+          },
+          "required": ["verdict"]
+        }
+      ]
+    },
+    "Mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "extends": { "type": "array", "items": { "type": "string" } },
+        "defaultDecision": { "$ref": "#/$defs/AnyVerdict" },
+        "tagRules": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/AnyVerdict" }
+        },
+        "toolRules": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/ToolRuleEntry" }
+          }
+        },
+        "aspectRules": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/AspectRule" }
+        },
+        "additionalInstructions": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "enum": ["append", "replace"] },
+            "text": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }] }
+          },
+          "required": ["mode", "text"]
+        }
+      },
+      "required": ["description", "defaultDecision", "tagRules", "toolRules", "aspectRules"]
+    },
+    "ToolRuleEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fields": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        },
+        "verdict": { "$ref": "#/$defs/AnyVerdict" }
+      },
+      "required": ["verdict"]
+    },
+    "AspectRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["generic", "bash"] },
+        "patterns": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/AnyVerdict" }
+        }
+      },
+      "required": ["patterns"]
+    },
+    "AllowedPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "path": { "type": "string", "minLength": 1 }
+      },
+      "required": ["tags", "path"]
+    },
+    "TaggerRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool": { "type": "string", "minLength": 1 },
+        "fields": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+        },
+        "aspects": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+        },
+        "action": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "type": { "const": "addTags" },
+                "tags": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["type", "tags"]
+            }
+          ]
+        }
+      },
+      "required": ["tool", "action"]
+    },
+    "ToolMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "aspects": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/AspectDeclaration" }
+        }
+      },
+      "required": ["aspects"]
+    },
+    "AspectDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["path", "path[]", "url", "url[]", "bash", "bash[]", "glob", "glob[]", "regex", "regex[]"] },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": ["mode", "fields"]
+    }
+  }
+}

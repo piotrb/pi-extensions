@@ -1,20 +1,42 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { loadConfig, writeRuleToFile } from "./permission-config.ts"
-import type { Config } from "./types.ts"
+import { loadConfig, STOCK_CONFIG } from "./permission-config.ts"
+import { YOLO_MODE } from "./types.ts"
 
 let tmpCwd: string
+let tmpHome: string
+
+// Isolate both the project cwd AND the user home dir so the tests don't
+// read a real ~/.pi/tool-policy.json from the developer environment.
+// `homedir()` is consulted on every call inside `loadConfig`, so
+// stubbing `process.env.HOME` (and `USERPROFILE` on Windows for
+// completeness) is enough — no module-level cache to invalidate.
+beforeAll(() => {
+  vi.stubEnv("HOME", "will-be-overridden-in-beforeEach")
+  vi.stubEnv("USERPROFILE", "will-be-overridden-in-beforeEach")
+})
+
+afterAll(() => {
+  vi.unstubAllEnvs()
+})
 
 beforeEach(async () => {
   tmpCwd = await mkdtemp(join(tmpdir(), "tool-policy-test-"))
+  tmpHome = await mkdtemp(join(tmpdir(), "tool-policy-test-home-"))
+  // The values from beforeAll were placeholders so the env-stub call
+  // is valid even on platforms that don't read USERPROFILE. Now we
+  // point HOME (and USERPROFILE) at a fresh, empty temp dir.
+  process.env.HOME = tmpHome
+  process.env.USERPROFILE = tmpHome
 })
 
 afterEach(async () => {
   await rm(tmpCwd, { recursive: true, force: true })
+  await rm(tmpHome, { recursive: true, force: true })
 })
 
 describe("loadConfig", () => {
@@ -25,36 +47,20 @@ describe("loadConfig", () => {
 
   it("reports the project source as present when the project file exists", async () => {
     await mkdir(join(tmpCwd, ".pi"), { recursive: true })
-    await writeFile(join(tmpCwd, ".pi", "tool-policy.json"), JSON.stringify({ defaultDecision: "deny" }))
+    await writeFile(join(tmpCwd, ".pi", "tool-policy.json"), JSON.stringify({ modeOrder: ["default"] }))
     const { sources } = await loadConfig(tmpCwd)
     expect(sources).toEqual({ project: true, user: false })
   })
 
-  // Project-over-STOCK_CONFIG merge: a project file that sets a single
-  // top-level key overrides the stock value for that key only. Other keys
-  // (like `tools`) still come from STOCK_CONFIG.
-  it("project file overrides STOCK_CONFIG for a matching top-level key", async () => {
-    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
-    await writeFile(join(tmpCwd, ".pi", "tool-policy.json"), JSON.stringify({ defaultDecision: "deny" }))
+  it("applies STOCK_CONFIG when neither file exists", async () => {
     const { config } = await loadConfig(tmpCwd)
-    expect(config.defaultDecision).toBe("deny")
-    // `tools` block still present from STOCK_CONFIG (built-in tools).
-    expect(config.tools).toBeDefined()
-  })
-
-  // Per-key shallow merge: the project's value replaces the stock's
-  // value for the same top-level key, but does not deep-merge into it.
-  // The user asked: if STOCK_CONFIG.tools.write === "ask" and the user
-  // config sets tools: { write: "allow" }, what wins?
-  // Answer: "allow" — the tools block is replaced as a whole.
-  it("user override of a top-level key replaces (not deep-merges into) STOCK_CONFIG", async () => {
-    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
-    await writeFile(join(tmpCwd, ".pi", "tool-policy.json"), JSON.stringify({ tools: { write: "allow" } }))
-    const { config } = await loadConfig(tmpCwd)
-    expect(config.tools?.write).toBe("allow")
-    // STOCK_CONFIG ships no aspects; user's file also has no aspects.
-    // The two should be merged into an empty object.
-    expect(config.aspects).toEqual({})
+    // Stock modes are present.
+    expect(config.modes).toHaveProperty("default")
+    expect(config.modes).toHaveProperty("plan")
+    expect(config.modes).toHaveProperty("edit")
+    // Stock toolMetadata for the 7 built-in tools is present.
+    expect(config.toolMetadata).toHaveProperty("read")
+    expect(config.toolMetadata).toHaveProperty("bash")
   })
 
   it("is idempotent (two consecutive calls return equivalent results)", async () => {
@@ -64,117 +70,328 @@ describe("loadConfig", () => {
     expect(a.sources).toEqual(b.sources)
   })
 
-  // Hot-reload contract: an external write to the config file MUST be
-  // visible on the very next loadConfig() call. This is what the
-  // extension's tool_call handler relies on — no in-memory cache, no
-  // mtime check, no file watcher.
-  it("re-reads after an external write (hot reload)", async () => {
-    const before = await loadConfig(tmpCwd)
-    // External write: simulate the user editing the file directly.
-    // The .pi/ parent dir does not pre-exist in this test — the
-    // test must create it the same way the writer does for symmetry.
-    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
-    await writeFile(join(tmpCwd, ".pi", "tool-policy.json"), JSON.stringify({ defaultDecision: "deny" }))
-    // No cache invalidation — the next call re-reads.
-    const after = await loadConfig(tmpCwd)
-    expect(after.config.defaultDecision).toBe("deny")
-    expect(after.config.defaultDecision).not.toBe(before.config.defaultDecision)
+  it("injects the YOLO (emergency-off) mode on every load, even with stock defaults", async () => {
+    const { config } = await loadConfig(tmpCwd)
+    expect(config.modes).toHaveProperty(YOLO_MODE)
+    expect(config.modeOrder).toContain(YOLO_MODE)
+    // The YOLO mode must be the LAST entry in modeOrder so the cycle wraps
+    // to it as a last resort. Users normally don't see it.
+    expect(config.modeOrder[config.modeOrder.length - 1]).toBe(YOLO_MODE)
+    // The YOLO mode's defaultDecision is allow (the gate is short-circuited
+    // entirely; the verdict is only set here for documentation).
+    expect(config.modes[YOLO_MODE]?.defaultDecision).toBe("allow")
   })
 
-  // Hot-reload contract #2: removing the file (so neither project nor user
-  // exist) MUST fall back to STOCK_CONFIG. This is the "external delete"
-  // case matching the "external write" case above.
-  it("re-reads after file deletion (falls back to STOCK_CONFIG)", async () => {
+  it("does not duplicate the YOLO mode in modeOrder if it was already added by the user", async () => {
     await mkdir(join(tmpCwd, ".pi"), { recursive: true })
-    await writeFile(join(tmpCwd, ".pi", "tool-policy.json"), JSON.stringify({ defaultDecision: "deny" }))
-    const a = await loadConfig(tmpCwd)
-    expect(a.config.defaultDecision).toBe("deny")
-    await rm(join(tmpCwd, ".pi", "tool-policy.json"))
-    const b = await loadConfig(tmpCwd)
-    expect(b.sources.project).toBe(false)
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({ modeOrder: ["default", "plan", "__yolo__"] }),
+    )
+    const { config } = await loadConfig(tmpCwd)
+    const yoloCount = config.modeOrder.filter((m) => m === YOLO_MODE).length
+    expect(yoloCount).toBe(1)
+  })
+
+  it("re-reads after an external write (hot reload)", async () => {
+    const before = await loadConfig(tmpCwd)
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(join(tmpCwd, ".pi", "tool-policy.json"), JSON.stringify({ modeOrder: ["only-mode"] }))
+    const after = await loadConfig(tmpCwd)
+    // The user-supplied modeOrder wins; the YOLO mode is appended automatically.
+    expect(after.config.modeOrder).toEqual(["only-mode", "__yolo__"])
+    expect(after.config.modeOrder).not.toEqual(before.config.modeOrder)
   })
 
   it("treats malformed JSON in the config file as if the file were missing", async () => {
-    // A parse error must not crash loadConfig — it should fall back to
-    // the previous layer (STOCK_CONFIG) for that scope, the same as
-    // ENOENT. The user gets a chance to fix the file on the next call.
     await mkdir(join(tmpCwd, ".pi"), { recursive: true })
     await writeFile(join(tmpCwd, ".pi", "tool-policy.json"), "{not valid json")
-    const { config, sources } = await loadConfig(tmpCwd)
+    const { config, sources, warnings } = await loadConfig(tmpCwd)
     expect(sources.project).toBe(false)
-    // defaultDecision still comes from STOCK_CONFIG, not from the file.
-    expect(config.defaultDecision).toBeDefined()
+    // Stock modeOrder is the prefix; the YOLO mode is appended on every load.
+    expect(config.modeOrder).toEqual([...STOCK_CONFIG.modeOrder, "__yolo__"])
+    // No warning is emitted for a parse error — silent fall-through per v1 contract.
+    expect(warnings).toEqual([])
   })
 
-  // Perf bound: hot reload must be cheap enough to call on every
-  // tool_call. 1000 sequential calls with neither file present (the
-  // STOCK_CONFIG-only path, which is the cheapest case) should fit
-  // well under 1s on any modern machine.
   it("is callable in a tight loop (1000 calls with no files) within 1s", async () => {
     const start = performance.now()
     for (let i = 0; i < 1000; i++) {
       await loadConfig(tmpCwd)
     }
     const elapsed = performance.now() - start
-    expect(elapsed).toBeLessThan(1000)
+    // 2000ms accommodates a slow CI runner; locally this is ~300ms.
+    expect(elapsed).toBeLessThan(2000)
+  })
+
+  it("project file overrides STOCK_CONFIG for a top-level key", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({ modeOrder: ["plan"], modes: { plan: { description: "custom", defaultDecision: "deny" } } }),
+    )
+    const { config } = await loadConfig(tmpCwd)
+    // The project file replaced the entire "plan" mode block.
+    expect(config.modes.plan?.description).toBe("custom")
+    expect(config.modes.plan?.defaultDecision).toBe("deny")
+    // The other stock modes are still present.
+    expect(config.modes).toHaveProperty("default")
   })
 })
 
-describe("writeRuleToFile", () => {
-  beforeEach(async () => {
-    // Ensure the parent .pi/ dir exists for the write to succeed.
+describe("extends deep-merge", () => {
+  it("child description wins; child defaultDecision wins", async () => {
     await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          child: {
+            description: "child desc",
+            extends: ["parent"],
+            defaultDecision: "deny",
+            tagRules: { x: "deny" },
+            toolRules: {},
+            aspectRules: {},
+          },
+          parent: {
+            description: "parent desc",
+            defaultDecision: "ask",
+            tagRules: { y: "ask" },
+            toolRules: {},
+            aspectRules: {},
+          },
+        },
+      }),
+    )
+    const { config, warnings } = await loadConfig(tmpCwd)
+    const child = config.modes.child!
+    expect(child.description).toBe("child desc")
+    expect(child.defaultDecision).toBe("deny")
+    // Both parent and child tagRules are present.
+    expect(child.tagRules).toEqual({ x: "deny", y: "ask" })
+    // No extends is left on the resolved mode.
+    expect(child.extends).toBeUndefined()
+    // No cycle warning.
+    expect(warnings).toEqual([])
   })
 
-  it("writes a tool rule to the project file", async () => {
-    await writeRuleToFile("project", "tool", "bash", "allow", tmpCwd)
-    const raw = await readFile(join(tmpCwd, ".pi", "tool-policy.json"), "utf-8")
-    expect(JSON.parse(raw)).toMatchObject({ tools: { bash: "allow" } })
+  it("parent tagRules fill in when child does not override them", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          child: {
+            description: "child",
+            extends: ["parent"],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+          parent: {
+            description: "parent",
+            defaultDecision: "ask",
+            tagRules: { a: "allow", b: "deny" },
+            toolRules: {},
+            aspectRules: {},
+          },
+        },
+      }),
+    )
+    const { config } = await loadConfig(tmpCwd)
+    expect(config.modes.child?.tagRules).toEqual({ a: "allow", b: "deny" })
   })
 
-  it("writes a defaultDecision rule to a key named 'defaultDecision'", async () => {
-    await writeRuleToFile("project", "defaultDecision", "", "deny", tmpCwd)
-    const raw = await readFile(join(tmpCwd, ".pi", "tool-policy.json"), "utf-8")
-    expect(JSON.parse(raw)).toMatchObject({ defaultDecision: "deny" })
+  it("child toolRules list replaces the parent's list (per-tool list replacement)", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          child: {
+            description: "child",
+            extends: ["parent"],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: { bash: [{ verdict: "deny" }] },
+            aspectRules: {},
+          },
+          parent: {
+            description: "parent",
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: { bash: [{ verdict: "allow" }, { verdict: "ask" }] },
+            aspectRules: {},
+          },
+        },
+      }),
+    )
+    const { config } = await loadConfig(tmpCwd)
+    // The child's list REPLACES the parent's, entry-by-entry merge NOT done.
+    expect(config.modes.child?.toolRules.bash).toEqual([{ verdict: "deny" }])
   })
 
-  it("writes a group verdict to the groupVerdicts block", async () => {
-    await writeRuleToFile("project", "group", "execution", "deny", tmpCwd)
-    const raw = await readFile(join(tmpCwd, ".pi", "tool-policy.json"), "utf-8")
-    expect(JSON.parse(raw)).toMatchObject({ groupVerdicts: { execution: "deny" } })
+  it("child additionalInstructions wins", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          child: {
+            description: "child",
+            extends: ["parent"],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+            additionalInstructions: { mode: "append", text: "child only" },
+          },
+          parent: {
+            description: "parent",
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+            additionalInstructions: { mode: "replace", text: "parent" },
+          },
+        },
+      }),
+    )
+    const { config } = await loadConfig(tmpCwd)
+    expect(config.modes.child?.additionalInstructions).toEqual({ mode: "append", text: "child only" })
   })
 
-  it("preserves existing top-level keys when adding a new tool rule", async () => {
-    await writeFile(join(tmpCwd, ".pi", "tool-policy.json"), JSON.stringify({ defaultDecision: "deny" }))
-    await writeRuleToFile("project", "tool", "write", "allow", tmpCwd)
-    const raw = await readFile(join(tmpCwd, ".pi", "tool-policy.json"), "utf-8")
-    const written: Config = JSON.parse(raw) as Config
-    // The pre-existing defaultDecision key is preserved, the new tool
-    // rule is added on top.
-    expect(written.defaultDecision).toBe("deny")
-    expect(written.tools?.write).toBe("allow")
+  it("parent additionalInstructions applies when child has none", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          child: {
+            description: "child",
+            extends: ["parent"],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+          parent: {
+            description: "parent",
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+            additionalInstructions: { mode: "replace", text: "parent prose" },
+          },
+        },
+      }),
+    )
+    const { config } = await loadConfig(tmpCwd)
+    expect(config.modes.child?.additionalInstructions).toEqual({ mode: "replace", text: "parent prose" })
+  })
+})
+
+describe("cycle detection", () => {
+  it("detects a → b → a and emits a warning", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          a: { description: "a", extends: ["b"], defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+          b: { description: "b", extends: ["a"], defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+        },
+      }),
+    )
+    const { warnings } = await loadConfig(tmpCwd)
+    expect(warnings.some((w) => w.toLowerCase().includes("cycle"))).toBe(true)
   })
 
-  // Hot-reload contract #3: a write from the modal (writeRuleToFile) is
-  // visible on the very next loadConfig() call. This is what makes
-  // /permissions -> "save rule" -> next tool_call see the new rule work.
-  it("writes are immediately visible on the next loadConfig (no cache)", async () => {
-    await writeRuleToFile("project", "tool", "read", "deny", tmpCwd)
-    const a = await loadConfig(tmpCwd)
-    expect(a.config.tools?.read).toBe("deny")
-    // Write again, immediately reload — must pick up the new value.
-    await writeRuleToFile("project", "tool", "read", "allow", tmpCwd)
-    const b = await loadConfig(tmpCwd)
-    expect(b.config.tools?.read).toBe("allow")
+  it("emits a warning for self-loop (a → a)", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          a: { description: "a", extends: ["a"], defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+        },
+      }),
+    )
+    const { warnings } = await loadConfig(tmpCwd)
+    expect(warnings.some((w) => w.toLowerCase().includes("cycle"))).toBe(true)
+  })
+
+  it("emits a warning for extends on an unknown mode", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          a: {
+            description: "a",
+            extends: ["ghost"],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+        },
+      }),
+    )
+    const { warnings } = await loadConfig(tmpCwd)
+    expect(warnings.some((w) => w.toLowerCase().includes("unknown mode"))).toBe(true)
+  })
+
+  it("no warning on a valid tree (a → b, a → c)", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          a: {
+            description: "a",
+            extends: ["b", "c"],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+          b: { description: "b", defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+          c: { description: "c", defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+        },
+      }),
+    )
+    const { warnings } = await loadConfig(tmpCwd)
+    expect(warnings).toEqual([])
+  })
+})
+
+describe("allowedPaths", () => {
+  it("keeps absolute paths as-is", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({ allowedPaths: [{ tags: [], path: "/etc/hosts" }] }),
+    )
+    const { config } = await loadConfig(tmpCwd)
+    expect(config.allowedPaths[0]?.path).toBe("/etc/hosts")
+  })
+
+  it("resolves project-level relative paths against cwd", async () => {
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({ allowedPaths: [{ tags: ["readonly"], path: "../shared" }] }),
+    )
+    const { config } = await loadConfig(tmpCwd)
+    expect(config.allowedPaths[0]?.path).toContain("shared")
+    expect(config.allowedPaths[0]?.path.startsWith("/")).toBe(true)
   })
 })
 
 describe("tool-policy extension does NOT read the legacy config paths", () => {
-  // Plan rule: the new system must not touch runner.json or
-  // .pi/extensions/pi-permission-system/config.json. This is a static
-  // check on the source — keeps the rule discoverable as a unit test.
-  // The check scans `src/lib/*.ts` only (excluding the test file itself
-  // — its own comment would otherwise be flagged).
   it("contains no string 'runner.json' in src/lib/*.ts (excluding tests)", async () => {
     const { readdir, readFile, stat } = await import("node:fs/promises")
     const dir = join(import.meta.dirname)

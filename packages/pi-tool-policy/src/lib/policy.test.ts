@@ -2,9 +2,8 @@ import type { ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-
 import { describe, expect, it } from "vitest"
 
 import { matchAspect } from "./aspects.ts"
-import { ExternalDirectoryState } from "./external-directory.ts"
-import { evaluate } from "./policy.ts"
-import type { AspectDefinition, Config, ResolvedToolMetadata, Verdict } from "./types.ts"
+import { buildDenyReason, evaluate } from "./policy.ts"
+import type { AspectRule, Config, ResolvedToolMetadata, Verdict } from "./types.ts"
 
 // Minimal mock — we only read event.toolName and event.input
 function makeEvent(toolName: string, input: Record<string, unknown>): ToolCallEvent {
@@ -12,221 +11,511 @@ function makeEvent(toolName: string, input: Record<string, unknown>): ToolCallEv
 }
 
 // Minimal ExtensionContext stub: only `cwd` is read by the policy engine.
-// Cast via `as unknown as ExtensionContext` to satisfy the strict-typed
-// ExtensionContext surface while keeping the test focused on policy logic.
 const ctx = { cwd: "/repo" } as unknown as ExtensionContext
-const emptyExternal = new ExternalDirectoryState()
+const emptyMeta = new Map<string, ResolvedToolMetadata>()
+
+/** Helper: build a synthetic Config with one default mode, then run evaluate. */
+function runInMode(
+  toolName: string,
+  input: Record<string, unknown>,
+  mode: Config["modes"][string],
+  effectiveTags: string[] = [],
+  toolMetadata: Map<string, ResolvedToolMetadata> = emptyMeta,
+) {
+  const config: Config = {
+    modeOrder: ["default"],
+    modes: { default: mode },
+    allowedPaths: [],
+    taggingRules: [],
+    toolMetadata: {},
+  }
+  return evaluate(makeEvent(toolName, input), config, "default", effectiveTags, toolMetadata, ctx)
+}
+
+/** Build a single-mode tool-metadata entry for a path-aspect tool. */
+function pathTool(_name: string, tags: string[] = ["readonly"]): ResolvedToolMetadata {
+  return {
+    tags,
+    fields: { path: { mode: "path", fields: ["path"] } },
+  }
+}
 
 describe("evaluate", () => {
-  describe("layer 1: tools", () => {
-    it("uses the tool's verdict", () => {
-      const config: Config = { tools: { read: "allow", write: "deny" } }
-      const meta = new Map<string, ResolvedToolMetadata>()
-      expect(evaluate(makeEvent("read", {}), config, meta, emptyExternal, ctx).action).toBe("allow")
-      expect(evaluate(makeEvent("write", {}), config, meta, emptyExternal, ctx).action).toBe("deny")
-    })
-
-    it("uses a per-tool pattern map (last-match-wins within the map)", () => {
-      // The tool's own name is matched against the pattern map. Order
-      // matters: the more-specific pattern is declared LAST so it wins.
-      const config: Config = { tools: { dangerous: { "*": "allow", dangerous: "deny" } } }
-      const meta = new Map<string, ResolvedToolMetadata>()
-      expect(evaluate(makeEvent("dangerous", {}), config, meta, emptyExternal, ctx).action).toBe("deny")
-    })
-  })
-
-  describe("layer 2: groupVerdicts", () => {
-    it("combines multiple groups most-restrictive-wins", () => {
-      const config: Config = { groupVerdicts: { readonly: "allow", mutating: "ask" } }
-      const meta = new Map<string, ResolvedToolMetadata>([["write", { groups: ["mutating"], fields: {} }]])
-      expect(evaluate(makeEvent("write", {}), config, meta, emptyExternal, ctx).action).toBe("ask")
-    })
-
-    it("deny in any group overrides allow", () => {
-      const config: Config = { groupVerdicts: { readonly: "allow", forbidden: "deny" } }
-      const meta = new Map<string, ResolvedToolMetadata>([["read", { groups: ["readonly", "forbidden"], fields: {} }]])
-      expect(evaluate(makeEvent("read", {}), config, meta, emptyExternal, ctx).action).toBe("deny")
-    })
-
-    it("ignores groups with no matching groupVerdict entry", () => {
-      // Tool is explicitly allowed, group 'readonly' allows, group 'unknown'
-      // has no entry → ignored. Final verdict is "allow".
-      const config: Config = { tools: { read: "allow" }, groupVerdicts: { readonly: "allow" } }
-      const meta = new Map<string, ResolvedToolMetadata>([["read", { groups: ["readonly", "unknown"], fields: {} }]])
-      expect(evaluate(makeEvent("read", {}), config, meta, emptyExternal, ctx).action).toBe("allow")
-    })
-  })
-
-  describe("layer 3: aspects", () => {
-    it("denies when an aspect pattern denies", () => {
-      const config: Config = {
-        aspects: { path: { patterns: { "**": "allow", "*.env": "deny" } } },
-        tools: { read: "allow" },
-      }
-      const meta = new Map<string, ResolvedToolMetadata>([
-        ["read", { groups: [], fields: { path: { aspect: "path" } } }],
-      ])
-      expect(evaluate(makeEvent("read", { path: "/repo/.env" }), config, meta, emptyExternal, ctx).action).toBe("deny")
-    })
-
-    it("joins string[] args for bash_cmd aspect", () => {
-      const config: Config = {
-        aspects: { bash_cmd: { mode: "bash", patterns: { "*": "ask", "rm -rf *": "deny" } } },
-        tools: { run: "ask" },
-      }
-      const meta = new Map<string, ResolvedToolMetadata>([
-        ["run", { groups: [], fields: { cmd: { aspect: "bash_cmd" } } }],
-      ])
-      expect(evaluate(makeEvent("run", { cmd: ["rm", "-rf", "/"] }), config, meta, emptyExternal, ctx).action).toBe(
-        "deny",
-      )
-    })
-
-    it("combines multi-binding fields via the lattice", () => {
-      // One field, two bindings: a path binding + a glob binding.
-      // The path aspect allows; the glob aspect denies — deny wins.
-      const config: Config = {
-        aspects: {
-          path: { patterns: { "**": "allow" } },
-          glob: { patterns: { "*": "deny" } },
+  describe("tag rules", () => {
+    it("applies a tag rule when the tag is in the effective set", () => {
+      const decision = runInMode(
+        "read",
+        { path: "/repo/foo.ts" },
+        {
+          description: "test",
+          defaultDecision: "allow",
+          tagRules: { readonly: "allow" },
+          toolRules: {},
+          aspectRules: {},
         },
-        tools: { read: "ask" },
-      }
-      const meta = new Map<string, ResolvedToolMetadata>([
-        ["read", { groups: [], fields: { path: [{ aspect: "path" }, { aspect: "glob" }] } }],
-      ])
-      expect(evaluate(makeEvent("read", { path: "/repo/foo.ts" }), config, meta, emptyExternal, ctx).action).toBe(
-        "deny",
+        ["readonly"],
       )
+      expect(decision.action).toBe("allow")
     })
 
-    it("records the matching pattern in blockingRules", () => {
-      const config: Config = {
-        aspects: { path: { patterns: { "**": "allow", "*.env": "deny" } } },
-        tools: { read: "allow" },
-      }
-      const meta = new Map<string, ResolvedToolMetadata>([
-        ["read", { groups: [], fields: { path: { aspect: "path" } } }],
-      ])
-      const decision = evaluate(makeEvent("read", { path: "/repo/.env" }), config, meta, emptyExternal, ctx)
-      expect(decision.action).toBe("deny")
-      if (decision.action !== "allow") {
-        const aspectRule = decision.blockingRules.find((r) => r.layer === "aspect")
-        expect(aspectRule).toBeDefined()
-        expect(aspectRule?.pattern).toBe("*.env")
-      }
-    })
-  })
-
-  describe("layer 4: externalDirectory", () => {
-    it("asks for a path outside cwd even when the tool is allowed", () => {
-      const config: Config = { tools: { read: "allow" } }
-      const meta = new Map<string, ResolvedToolMetadata>([
-        ["read", { groups: [], fields: { path: { aspect: "path" } } }],
-      ])
-      const decision = evaluate(makeEvent("read", { path: "/etc/passwd" }), config, meta, emptyExternal, ctx)
+    it("ignores a tag rule when the tag is NOT in the effective set", () => {
+      const decision = runInMode(
+        "write",
+        { path: "/repo/foo.ts" },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { readonly: "allow" },
+          toolRules: {},
+          aspectRules: {},
+        },
+        ["mutating"],
+      )
+      // No rule fires for "mutating"; defaultDecision ("ask") wins as noop (same as runner).
       expect(decision.action).toBe("ask")
-      if (decision.action !== "allow") {
-        expect(decision.blockingRules.some((r) => r.layer === "externalDirectory")).toBe(true)
-      }
     })
 
-    it("does not ask for a path inside cwd", () => {
-      const config: Config = { tools: { read: "allow" } }
-      const meta = new Map<string, ResolvedToolMetadata>([
-        ["read", { groups: [], fields: { path: { aspect: "path" } } }],
-      ])
-      expect(evaluate(makeEvent("read", { path: "/repo/foo.ts" }), config, meta, emptyExternal, ctx).action).toBe(
-        "allow",
+    it("deny in any tag wins over allow in another", () => {
+      const decision = runInMode(
+        "bash",
+        { command: ["echo", "hi"] },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { readonly: "allow", destructive: "deny" },
+          toolRules: {},
+          aspectRules: {},
+        },
+        ["readonly", "destructive"],
       )
+      expect(decision.action).toBe("deny")
     })
   })
 
-  describe("undecided collapse", () => {
-    it("undecided from all layers → ask (fail-closed)", () => {
-      const config: Config = {
-        aspects: { path: { patterns: { "*.env": "deny" } } }, // no '**' default
-        tools: { read: "ask" },
-      }
-      const meta = new Map<string, ResolvedToolMetadata>([
-        ["read", { groups: [], fields: { path: { aspect: "path" } } }],
-      ])
-      expect(evaluate(makeEvent("read", { path: "/repo/foo.ts" }), config, meta, emptyExternal, ctx).action).toBe("ask")
+  describe("aspect rules", () => {
+    it("denies when an aspect pattern denies", () => {
+      const path: AspectRule = { patterns: { "**": "allow", "*.env": "deny" } }
+      const decision = runInMode(
+        "read",
+        { path: "/repo/.env" },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: {},
+          toolRules: {},
+          aspectRules: { path },
+        },
+        [],
+        new Map([["read", pathTool("read")]]),
+      )
+      expect(decision.action).toBe("deny")
     })
 
-    it("defaultDecision is consulted only when no tools[tool] entry exists", () => {
-      // No tools entry for 'unknown' → defaultDecision wins.
-      const config: Config = {
-        defaultDecision: "deny",
-        aspects: { path: { patterns: { "*.env": "deny" } } },
-      }
-      const meta = new Map<string, ResolvedToolMetadata>([
-        ["unknown", { groups: [], fields: { path: { aspect: "path" } } }],
-      ])
-      // No aspect match, no group, no tool entry → fallback to defaultDecision ("deny").
-      expect(evaluate(makeEvent("unknown", { path: "/repo/foo.ts" }), config, meta, emptyExternal, ctx).action).toBe(
-        "deny",
+    it("joins string[] args for the bash aspect", () => {
+      const bash: AspectRule = { mode: "bash", patterns: { "*": "ask", "rm -rf *": "deny" } }
+      const decision = runInMode(
+        "bash",
+        { command: ["rm", "-rf", "/"] },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: {},
+          toolRules: {},
+          aspectRules: { bash_cmd: bash },
+        },
+        [],
+        new Map([["bash", { tags: ["execution"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }]]),
       )
+      expect(decision.action).toBe("deny")
+    })
+
+    it("records the matching pattern in ruleTrail", () => {
+      const path: AspectRule = { patterns: { "**": "allow", "*.env": "deny" } }
+      const decision = runInMode(
+        "read",
+        { path: "/repo/.env" },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: {},
+          toolRules: {},
+          aspectRules: { path },
+        },
+        [],
+        new Map([["read", pathTool("read")]]),
+      )
+      expect(decision.action).toBe("deny")
+      const aspectRule = decision.ruleTrail.find((r) => r.layer === "aspect")
+      expect(aspectRule).toBeDefined()
+      expect(aspectRule?.pattern).toBe("*.env")
+    })
+  })
+
+  describe("tool rules", () => {
+    it("matches a tool with no fields clause (always matches)", () => {
+      const decision = runInMode(
+        "bash",
+        { command: ["echo", "hi"] },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: {},
+          toolRules: { bash: [{ verdict: "deny" }] },
+          aspectRules: {},
+        },
+      )
+      expect(decision.action).toBe("deny")
+    })
+
+    it("matches a tool when the fields clause matches", () => {
+      const decision = runInMode(
+        "bash",
+        { command: ["echo", "hi"] },
+        {
+          description: "test",
+          defaultDecision: "allow",
+          tagRules: {},
+          toolRules: { bash: [{ fields: { command: ["echo *"] }, verdict: "allow" }] },
+          aspectRules: {},
+        },
+      )
+      expect(decision.action).toBe("allow")
+    })
+
+    it("does NOT match when the fields clause fails", () => {
+      const decision = runInMode(
+        "bash",
+        { command: ["rm", "-rf", "/"] },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: {},
+          toolRules: { bash: [{ fields: { command: ["echo *"] }, verdict: "allow" }] },
+          aspectRules: {},
+        },
+      )
+      // No rule fires; defaultDecision ("ask") is the winner.
+      expect(decision.action).toBe("ask")
+    })
+  })
+
+  describe("defaultDecision fall-through", () => {
+    it("defaultDecision wins when no rules fire", () => {
+      const decision = runInMode(
+        "unknown",
+        {},
+        {
+          description: "test",
+          defaultDecision: "deny",
+          tagRules: {},
+          toolRules: {},
+          aspectRules: {},
+        },
+      )
+      expect(decision.action).toBe("deny")
+    })
+
+    it("the defaultDecision status is 'noop' if the runner already matches", () => {
+      const decision = runInMode(
+        "read",
+        { path: "/repo/foo.ts" },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { readonly: "ask" },
+          toolRules: {},
+          aspectRules: {},
+        },
+        ["readonly"],
+      )
+      // The tag rule already produced "ask" (the same as defaultDecision).
+      const defaultRule = decision.ruleTrail.find((r) => r.layer === "default")
+      expect(defaultRule?.status).toBe("noop")
+    })
+
+    it("the defaultDecision status is 'applied' when no rules fired", () => {
+      const decision = runInMode(
+        "unknown",
+        {},
+        {
+          description: "test",
+          defaultDecision: "deny",
+          tagRules: {},
+          toolRules: {},
+          aspectRules: {},
+        },
+      )
+      const defaultRule = decision.ruleTrail.find((r) => r.layer === "default")
+      expect(defaultRule?.status).toBe("applied")
+    })
+  })
+
+  describe("status trail", () => {
+    it("'applied' status is the most-restrictive winner", () => {
+      const decision = runInMode(
+        "write",
+        { path: "/repo/foo.ts" },
+        {
+          description: "test",
+          defaultDecision: "allow",
+          tagRules: { readonly: "allow", mutating: "deny" },
+          toolRules: {},
+          aspectRules: {},
+        },
+        ["readonly", "mutating"],
+      )
+      expect(decision.action).toBe("deny")
+      const denyRule = decision.ruleTrail.find((r) => r.verdict === "deny")
+      expect(denyRule?.status).toBe("applied")
+      // The "readonly" tag rule fired first and set the running decision
+      // to "allow" (status: "applied"). When the "mutating" deny rule
+      // fired, it was strictly more restrictive, so it took over (also
+      // "applied"). Both rules' statuses are "applied" because each was
+      // the running winner at the time it contributed.
+      const allowRule = decision.ruleTrail.find((r) => r.layer === "tag" && r.key === "readonly")
+      expect(allowRule?.status).toBe("applied")
+    })
+
+    it("'noop' status when the rule's verdict matches the running decision", () => {
+      const decision = runInMode(
+        "read",
+        { path: "/repo/foo.ts" },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { readonly: "ask", metadata: "ask" },
+          toolRules: {},
+          aspectRules: {},
+        },
+        ["readonly", "metadata"],
+      )
+      // Both tag rules produce "ask"; the second is noop relative to the first.
+      const readonlyRule = decision.ruleTrail.find((r) => r.layer === "tag" && r.key === "readonly")
+      const metadataRule = decision.ruleTrail.find((r) => r.layer === "tag" && r.key === "metadata")
+      // Order in ruleTrail: readonly (applied) then metadata (noop).
+      expect(readonlyRule?.status).toBe("applied")
+      expect(metadataRule?.status).toBe("noop")
+    })
+  })
+
+  describe("AnyVerdict reasons", () => {
+    it("concatenates applied rules' reasons with '; '", () => {
+      const decision = runInMode(
+        "bash",
+        { command: ["echo", "hi"] },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { execution: { verdict: "deny", reason: "no execution in plan mode" } },
+          toolRules: { bash: [{ verdict: { verdict: "ask", reason: "always ask for bash" } }] },
+          aspectRules: {},
+        },
+        ["execution"],
+      )
+      expect(decision.action).toBe("deny")
+      // For deny verdicts, the reason is a 3-part layout: headline
+      // (tool + mode), middle block (rule reason or matched-rule id),
+      // suffix (steering instruction). The single applied rule's reason
+      // wins (the toolRules 'ask' is suppressed by the more-restrictive
+      // 'deny').
+      expect(decision.reason).toBe(
+        "The agent was not permitted to call the `bash` tool in `default` mode.\n\n" +
+          'Reason from the rule: "no execution in plan mode"\n\n' +
+          "Analyze why this call was blocked and adjust your approach accordingly.",
+      )
+    })
+
+    it("synthesizes a reason when no applied rule has one", () => {
+      const decision = runInMode(
+        "read",
+        { path: "/repo/.env" },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: {},
+          toolRules: {},
+          aspectRules: { path: { patterns: { "**": "allow", "*.env": "deny" } } },
+        },
+        [],
+        new Map([["read", pathTool("read")]]),
+      )
+      expect(decision.action).toBe("deny")
+      // The aspect rule has no reason; the middle block shows the
+      // matched rule's pattern instead. The 3-part layout is the
+      // standard deny-reason template.
+      expect(decision.reason).toBe(
+        "The agent was not permitted to call the `read` tool in `default` mode.\n\n" +
+          "Matched rule: *.env\n\n" +
+          "Analyze why this call was blocked and adjust your approach accordingly.",
+      )
+    })
+
+    it("uses 'Permission requested' framing for ask verdicts (not 'Rejected')", () => {
+      const decision = runInMode(
+        "read",
+        { path: "/repo/.env" },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: {},
+          toolRules: {},
+          aspectRules: { path: { patterns: { "*.env": { verdict: "ask", reason: "sensitive" } } } },
+        },
+        [],
+        new Map([["read", pathTool("read")]]),
+      )
+      expect(decision.action).toBe("ask")
+      // The reason is framed as a request, not a rejection.
+      // The aspect rule has no reason, so the synthesizer falls back to
+      // the pattern; the framing prefix distinguishes 'ask' from 'deny'.
+      expect(decision.reason).toBe("Permission requested: *.env")
+    })
+  })
+
+  describe("v1 backward-compat (under a synthetic default mode)", () => {
+    it("reproduces the v1 'tools' verdict via toolRules", () => {
+      // v1 had: tools: { read: "allow", write: "deny" }
+      // v2 equivalent: toolRules: { read: [{ verdict: "allow" }], write: [{ verdict: "deny" }] }
+      const allowDecision = runInMode(
+        "read",
+        {},
+        {
+          description: "test",
+          defaultDecision: "allow",
+          tagRules: {},
+          toolRules: { read: [{ verdict: "allow" }] },
+          aspectRules: {},
+        },
+      )
+      const denyDecision = runInMode(
+        "write",
+        {},
+        {
+          description: "test",
+          defaultDecision: "allow",
+          tagRules: {},
+          toolRules: { write: [{ verdict: "deny" }] },
+          aspectRules: {},
+        },
+      )
+      expect(allowDecision.action).toBe("allow")
+      expect(denyDecision.action).toBe("deny")
+    })
+
+    it("reproduces the v1 groupVerdicts via tagRules + tool-metadata tags", () => {
+      // v1: groupVerdicts: { readonly: "allow", mutating: "ask" } + tool metadata with groups
+      // v2: tagRules: { readonly: "allow", mutating: "ask" } + tool metadata with tags
+      const decision = runInMode(
+        "write",
+        {},
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { readonly: "allow", mutating: "ask" },
+          toolRules: {},
+          aspectRules: {},
+        },
+        ["mutating"],
+      )
+      expect(decision.action).toBe("ask")
+    })
+
+    it("reproduces the v1 per-tool pattern map via a single fields-clause entry", () => {
+      // v1: tools: { dangerous: { "*": "allow", dangerous: "deny" } }
+      // v2: toolRules: { dangerous: [{ fields: { _tool: ["dangerous"] }, verdict: "deny" }] }
+      // (The v1 "tool name pattern" is gone in v2 — the user's config now uses
+      // an exact tool name in toolRules. To match a v1-style "per-tool pattern",
+      // the user would just add multiple toolRules entries. The semantic
+      // equivalent here is the explicit entry.)
+      const decision = runInMode(
+        "dangerous",
+        {},
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: {},
+          toolRules: { dangerous: [{ verdict: "deny" }] },
+          aspectRules: {},
+        },
+      )
+      expect(decision.action).toBe("deny")
+    })
+  })
+
+  describe("unknown mode", () => {
+    it("denies on unknown mode", () => {
+      const config: Config = {
+        modeOrder: ["default"],
+        modes: { default: { description: "", defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} } },
+        allowedPaths: [],
+        taggingRules: [],
+        toolMetadata: {},
+      }
+      const decision = evaluate(makeEvent("read", {}), config, "missing", [], emptyMeta, ctx)
+      expect(decision.action).toBe("deny")
+      expect(decision.reason).toContain("unknown mode")
     })
   })
 
   describe("performance", () => {
-    // Perf bound from the plan: 4 layers × 100 rules per layer resolves
-    // a single tool_call within 20ms (the design's "O(layers × rules) — O(n)
-    // with small constant" claim).
     it("resolves a tool_call with 4 layers × 100 rules within 100ms (CI-friendly)", () => {
-      // Build a config with 4 aspects, 4 groups, 4 tools, 4 default verdicts.
-      // Each aspect has 100 patterns; each group has 100 verdicts; the
-      // tool's per-field binding maps into 100 of the 4 aspects.
+      // Build a mode with 100 tagRules, 100 aspectRules patterns, 100 toolRules entries.
+      const tagRules: Record<string, Verdict> = {}
+      for (let i = 0; i < 100; i++) {
+        tagRules[`tag-${i}`] = i === 99 ? "deny" : "allow"
+      }
       const aspectPatterns: Record<string, Verdict> = {}
       for (let i = 0; i < 100; i++) {
         aspectPatterns[`pattern-${i}-*.ts`] = i === 99 ? "deny" : "allow"
       }
-      const aspects: Record<string, AspectDefinition> = {
-        path: { patterns: aspectPatterns },
-        url: { patterns: aspectPatterns },
-        glob: { patterns: aspectPatterns },
-        bash_cmd: { mode: "bash", patterns: aspectPatterns },
-      }
-      const groupVerdicts: Record<string, Verdict> = {}
+      const toolEntries = []
       for (let i = 0; i < 100; i++) {
-        groupVerdicts[`group-${i}`] = i === 99 ? "deny" : "allow"
+        toolEntries.push({ fields: { path: [`pattern-${i}-*`] }, verdict: (i === 99 ? "deny" : "allow") as Verdict })
       }
-      // Tool 'big' belongs to 100 groups, has 4 fields (one per aspect).
-      const groups: string[] = []
-      for (let i = 0; i < 100; i++) groups.push(`group-${i}`)
-      const config: Config = { aspects, groupVerdicts, tools: { big: "allow" } }
-      const meta = new Map<string, ResolvedToolMetadata>([
-        [
-          "big",
-          {
-            groups,
-            fields: {
-              path: { aspect: "path" },
-              url: { aspect: "url" },
-              glob: { aspect: "glob" },
-              bash_cmd: { aspect: "bash_cmd" },
+      const effectiveTags: string[] = []
+      for (let i = 0; i < 100; i++) effectiveTags.push(`tag-${i}`)
+
+      const meta = new Map<string, ResolvedToolMetadata>([["big", pathTool("big", effectiveTags)]])
+
+      const decision = runInMode(
+        "big",
+        { path: "/repo/pattern-99-final.ts" },
+        {
+          description: "stress",
+          defaultDecision: "ask",
+          tagRules,
+          toolRules: { big: toolEntries },
+          aspectRules: { path: { patterns: aspectPatterns } },
+        },
+        effectiveTags,
+        meta,
+      )
+      const start = performance.now()
+      evaluate(
+        makeEvent("big", { path: "/repo/pattern-99-final.ts" }),
+        {
+          modeOrder: ["default"],
+          modes: {
+            default: {
+              description: "stress",
+              defaultDecision: "ask",
+              tagRules,
+              toolRules: { big: toolEntries },
+              aspectRules: { path: { patterns: aspectPatterns } },
             },
           },
-        ],
-      ])
-      const start = performance.now()
-      const decision = evaluate(
-        makeEvent("big", {
-          path: "/repo/pattern-99-final.ts",
-          url: "https://example.com/pattern-99",
-          glob: "/repo/pattern-99-final.ts",
-          bash_cmd: ["pattern-99", "final"],
-        }),
-        config,
+          allowedPaths: [],
+          taggingRules: [],
+          toolMetadata: {},
+        },
+        "default",
+        effectiveTags,
         meta,
-        emptyExternal,
         ctx,
       )
       const elapsed = performance.now() - start
-      // The 'deny' verdict from any of the 4 layers must surface.
+
       expect(decision.action).toBe("deny")
-      // 100ms accommodates CI noise + cold picomatch compilation; locally this is single-digit ms.
       expect(elapsed).toBeLessThan(100)
     })
   })
@@ -235,8 +524,135 @@ describe("evaluate", () => {
 // Tiny smoke: re-export the import to keep the dependency explicit in the
 // coverage report and to ensure the import path stays valid.
 describe("module surface", () => {
-  it("re-exports matchAspect and ExternalDirectoryState", () => {
+  it("re-exports matchAspect", () => {
     expect(typeof matchAspect).toBe("function")
-    expect(typeof ExternalDirectoryState).toBe("function")
+  })
+})
+
+describe("buildDenyReason", () => {
+  // Helper to keep the test cases readable. Each case constructs a
+  // minimal applied-rule list; the formatter only cares about layer,
+  // key, and pattern (and whether status is "applied").
+  const head = (tool: string, mode: string) =>
+    `The agent was not permitted to call the \`${tool}\` tool in \`${mode}\` mode.`
+  const suffix = "Analyze why this call was blocked and adjust your approach accordingly."
+
+  it("formats a deny with a configured reason (the most common case)", () => {
+    const reason = buildDenyReason({
+      toolName: "bash",
+      modeName: "plan",
+      appliedRules: [{ layer: "tag", key: "execution", verdict: "deny", status: "applied" }],
+      reasonParts: ["no execution in plan mode"],
+      explicitRuleFired: true,
+    })
+    expect(reason).toBe(
+      `${head("bash", "plan")}\n\n` + `Reason from the rule: "no execution in plan mode"\n\n` + suffix,
+    )
+  })
+
+  it("joins multiple configured reasons with '; ' inside the same quoted span", () => {
+    const reason = buildDenyReason({
+      toolName: "bash",
+      modeName: "default",
+      appliedRules: [
+        { layer: "tag", key: "execution", verdict: "deny", status: "applied", reason: "no execution" },
+        { layer: "tool", key: "bash", verdict: "deny", status: "applied", reason: "bash is banned" },
+      ],
+      reasonParts: ["no execution", "bash is banned"],
+      explicitRuleFired: true,
+    })
+    expect(reason).toBe(
+      `${head("bash", "default")}\n\n` + `Reason from the rule: "no execution"; "bash is banned"\n\n` + suffix,
+    )
+  })
+
+  it("uses 'User's reason for denying' when a one-off reason is supplied", () => {
+    const reason = buildDenyReason({
+      toolName: "bash",
+      modeName: "default",
+      appliedRules: [{ layer: "tag", key: "execution", verdict: "deny", status: "applied", reason: "from config" }],
+      // The configured reason is also present, but the one-off reason
+      // wins — the user just told us why NOW.
+      reasonParts: ["from config"],
+      explicitRuleFired: true,
+      userReason: "touches /etc — confirm before retrying",
+    })
+    expect(reason).toBe(
+      `${head("bash", "default")}\n\n` +
+        `User's reason for denying: "touches /etc — confirm before retrying"\n\n` +
+        suffix,
+    )
+  })
+
+  it("falls back to 'Matched rule: <id>' when no reason is present and a rule fired", () => {
+    const reason = buildDenyReason({
+      toolName: "read",
+      modeName: "default",
+      appliedRules: [
+        { layer: "aspect", key: "path", aspect: "path", pattern: "*.env", verdict: "deny", status: "applied" },
+      ],
+      reasonParts: [],
+      explicitRuleFired: true,
+    })
+    // For aspect-layer rules the most useful id is the pattern, not
+    // the layer:key. So we get `Matched rule: *.env`.
+    expect(reason).toBe(`${head("read", "default")}\n\n` + `Matched rule: *.env\n\n` + suffix)
+  })
+
+  it("uses 'tool:<name>' for tool-layer rules in the 'no reason' case", () => {
+    const reason = buildDenyReason({
+      toolName: "bash",
+      modeName: "default",
+      appliedRules: [{ layer: "tool", key: "bash", verdict: "deny", status: "applied" }],
+      reasonParts: [],
+      explicitRuleFired: true,
+    })
+    expect(reason).toBe(`${head("bash", "default")}\n\n` + `Matched rule: tool:bash\n\n` + suffix)
+  })
+
+  it("uses 'tag:<name>' for tag-layer rules in the 'no reason' case", () => {
+    const reason = buildDenyReason({
+      toolName: "bash",
+      modeName: "default",
+      appliedRules: [{ layer: "tag", key: "mutating", verdict: "deny", status: "applied" }],
+      reasonParts: [],
+      explicitRuleFired: true,
+    })
+    expect(reason).toBe(`${head("bash", "default")}\n\n` + `Matched rule: tag:mutating\n\n` + suffix)
+  })
+
+  it("uses the 'Default mode decision: deny (no rule matched)' line for default-deny", () => {
+    const reason = buildDenyReason({
+      toolName: "bash",
+      modeName: "plan",
+      appliedRules: [],
+      reasonParts: [],
+      explicitRuleFired: false,
+    })
+    expect(reason).toBe(`${head("bash", "plan")}\n\n` + `Default mode decision: deny (no rule matched)\n\n` + suffix)
+  })
+
+  it("ignores empty-string reason parts (treats them as no reason)", () => {
+    const reason = buildDenyReason({
+      toolName: "bash",
+      modeName: "default",
+      appliedRules: [{ layer: "tag", key: "execution", verdict: "deny", status: "applied" }],
+      reasonParts: ["", ""],
+      explicitRuleFired: true,
+    })
+    // Empty-string reasons fall through to the "Matched rule" path.
+    expect(reason).toContain("Matched rule: tag:execution")
+  })
+
+  it("ignores empty user reason (falls through to configured reason)", () => {
+    const reason = buildDenyReason({
+      toolName: "bash",
+      modeName: "default",
+      appliedRules: [{ layer: "tag", key: "execution", verdict: "deny", status: "applied", reason: "configured" }],
+      reasonParts: ["configured"],
+      explicitRuleFired: true,
+      userReason: "",
+    })
+    expect(reason).toContain('Reason from the rule: "configured"')
   })
 })

@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest"
 
 import { matchAspect } from "./aspects.ts"
-import type { AspectDefinition, Verdict } from "./types.ts"
+import type { AspectRule, Verdict } from "./types.ts"
 
 describe("matchAspect", () => {
   describe("path", () => {
     // Last-match-wins: defaults come FIRST, overrides come LATER. This means
     // a more specific pattern (e.g. "*.env") declared after "*" will win
     // for the value it matches, and "*" acts as the catch-all default.
-    const path: AspectDefinition = { patterns: { "**": "allow", "*.env": "deny" } }
+    const path: AspectRule = { patterns: { "**": "allow", "*.env": "deny" } }
 
     it("matches .env inside cwd (deny wins because *.env is later)", () => {
       expect(matchAspect("path", "/repo/.env", path, "/repo")).toEqual({
@@ -26,14 +26,14 @@ describe("matchAspect", () => {
     })
 
     it("returns undecided when no pattern matches and no '**' default", () => {
-      const noDefault: AspectDefinition = { patterns: { "*.env": "deny" } }
+      const noDefault: AspectRule = { patterns: { "*.env": "deny" } }
       expect(matchAspect("path", "/repo/foo.ts", noDefault, "/repo")).toBe("undecided")
     })
   })
 
   describe("url", () => {
     // Last-match-wins: defaults first, specific overrides later.
-    const url: AspectDefinition = { patterns: { "*": "ask", "https://*.example.com/*": "allow" } }
+    const url: AspectRule = { patterns: { "*": "ask", "https://*.example.com/*": "allow" } }
 
     it("allows an example.com URL (more-specific pattern declared later wins)", () => {
       expect(matchAspect("url", "https://api.example.com/foo", url, "/")).toEqual({
@@ -59,7 +59,7 @@ describe("matchAspect", () => {
 
   describe("bash_cmd", () => {
     // Last-match-wins: defaults first, specific overrides later.
-    const bash: AspectDefinition = {
+    const bash: AspectRule = {
       mode: "bash",
       patterns: { "*": "ask", "pnpm run *": "allow", "rm -rf *": "deny" },
     }
@@ -87,7 +87,7 @@ describe("matchAspect", () => {
     })
 
     it("bash word-boundary: 'git' matches 'git *' but 'gitfoo' does not", () => {
-      const allowGit: AspectDefinition = { mode: "bash", patterns: { "git *": "allow" } }
+      const allowGit: AspectRule = { mode: "bash", patterns: { "git *": "allow" } }
       expect(matchAspect("bash_cmd", "git status", allowGit, "/")).toEqual({
         verdict: "allow",
         pattern: "git *",
@@ -99,7 +99,7 @@ describe("matchAspect", () => {
 
   describe("glob", () => {
     // Last-match-wins: defaults first, specific overrides later.
-    const glob: AspectDefinition = { patterns: { "*": "deny", "*.ts": "allow" } }
+    const glob: AspectRule = { patterns: { "*": "deny", "*.ts": "allow" } }
 
     it("matches a .ts file (basename-only, *.ts declared after *)", () => {
       // basename of "/repo/src/foo.ts" is "foo.ts" — matches "*.ts".
@@ -112,7 +112,7 @@ describe("matchAspect", () => {
 
   describe("last-match-wins", () => {
     it("returns the LAST matching pattern, not the first", () => {
-      const aspect: AspectDefinition = {
+      const aspect: AspectRule = {
         patterns: { "**": "ask", "*.env": "allow", "*.env.*": "deny" },
       }
       // ".env.local" matches "*.env" AND "*.env.*" — the LAST matching wins (deny).
@@ -120,6 +120,16 @@ describe("matchAspect", () => {
         verdict: "deny",
         pattern: "*.env.*",
       })
+    })
+  })
+
+  describe("AnyVerdict in patterns", () => {
+    it("accepts { verdict, reason } values in patterns", () => {
+      const path: AspectRule = {
+        patterns: { "**": "allow", "*.env": { verdict: "deny", reason: "secret" } },
+      }
+      const result = matchAspect("path", "/repo/.env", path, "/repo")
+      expect(result).toEqual({ verdict: "deny", pattern: "*.env" })
     })
   })
 
@@ -133,7 +143,7 @@ describe("matchAspect", () => {
       for (let i = 0; i < 1000; i++) {
         patterns[`pattern-${i}-*.ts`] = i === 999 ? "deny" : "allow"
       }
-      const aspect: AspectDefinition = { patterns }
+      const aspect: AspectRule = { patterns }
       const start = performance.now()
       const result = matchAspect("path", "/repo/pattern-999-final.ts", aspect, "/repo")
       const elapsed = performance.now() - start
@@ -147,15 +157,15 @@ describe("matchAspect", () => {
       for (let i = 0; i < 1000; i++) {
         patterns[`pattern-${i}-*.ts`] = i === 999 ? "deny" : "allow"
       }
-      const aspect: AspectDefinition = { patterns }
+      const aspect: AspectRule = { patterns }
       // Prime the module-level picomatch cache.
       matchAspect("path", "/repo/pattern-999-final.ts", aspect, "/repo")
       const start = performance.now()
       const result = matchAspect("path", "/repo/pattern-999-final.ts", aspect, "/repo")
       const elapsed = performance.now() - start
       expect(result).toEqual({ verdict: "deny", pattern: "pattern-999-*.ts" })
-      // 20ms accommodates CI noise; locally this is ~1ms.
-      expect(elapsed).toBeLessThan(20)
+      // 50ms accommodates CI noise; locally this is ~1ms.
+      expect(elapsed).toBeLessThan(50)
     })
   })
 })
