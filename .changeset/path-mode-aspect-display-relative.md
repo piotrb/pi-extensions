@@ -1,0 +1,11 @@
+---
+"@piotrb/pi-tool-policy": patch
+---
+
+Display `path`-mode aspect values as paths relative to the project root in the policy-ask UI:
+
+- New `src/lib/modal/path-display.ts` exports `formatPathForDisplay(value, cwd)`. The conversion is the natural one for the common case (path inside cwd → bare relative form) and falls back to `` `rel` (`abs`) `` when the path escapes cwd, matching the directory-permissions modal's `formatDirectoryPath` convention. Already-relative input passes through unchanged so tools that hand the user a relative path (e.g. `git_add`) don't see a misleading `../../cwd/...` form.
+- `buildAskDisplay` (in `src/lib/modal/ask-display.ts`) and `buildSuggestedAllow` (in `src/lib/modal/suggested-allow.ts`) accept an optional `cwd`. When provided AND the aspect's `mode` is `"path"`, the user-facing field lines and label are converted to cwd-relative form. The persisted `entry.fields` clause in `buildSuggestedAllow` is intentionally kept in its original form — the tool-rule layer matches it via `genericPatternToRegex` full-string equality against the raw input, so a relative value here would never match a future absolute call.
+- `computeAspectPrefill` (in `src/lib/modal/policy-ask-modal.ts`) accepts an optional `cwd`. For `path`-mode aspects the returned prefill is cwd-relative: this is what the user sees in the text-input prompt AND what gets persisted as the aspect pattern. The matcher's `path` branch in `aspects.ts` picomatches the pattern against `relative(cwd, value)`, so a relative pattern is the natural form for the user to write and edit.
+- `PolicyAskArgs` gains a required `cwd: string` field, plumbed from `ctx.cwd` at the `openPolicyAskModal` call site in `src/extensions/tool-policy.ts`. The fallback path (tools without `pi.toolMetadata`) is unchanged — we don't know which fields are paths, so we don't relativize.
+- 24 new tests across `path-display.test.ts` (new), `ask-display.test.ts`, `suggested-allow.test.ts`, and `modal.test.ts` cover: path inside cwd, cwd itself (renders `.`), path outside cwd (both forms), deeply-nested relative paths, multiple `..` segments, already-relative bypass, non-path-mode-unchanged-with-cwd, fallback-unchanged-with-cwd, no-cwd back-compat, and the entry-stays-absolute invariant on the tool-rule layer.

@@ -2,6 +2,7 @@ import { coerceForMatch } from "../policy.ts"
 import type { ResolvedToolMetadata, ToolRuleEntry } from "../types.ts"
 import { fieldName, isArrayBinding } from "../types.ts"
 import { formatValue } from "./ask-display.ts"
+import { formatPathForDisplay } from "./path-display.ts"
 
 /**
  * What the "Allow for this user / project" option in the policy-ask
@@ -30,11 +31,19 @@ export interface SuggestedAllow {
  * For tools WITHOUT aspect metadata, we fall back to the input field
  * names themselves (`cmd`, `path`, etc.). The semantics are the same:
  * one line per captured field, with values formatted via `formatValue`.
+ *
+ * `cwd` is optional. When provided AND the aspect's mode is `"path"`,
+ * the LABEL is converted to cwd-relative form for display. The
+ * persisted `entry.fields` clause is ALWAYS the original (typically
+ * absolute) value — the tool-rule fields clause is matched against
+ * the raw input via `genericPatternToRegex` full-string equality, so
+ * a relative value here would never match a future absolute call.
  */
 export function buildSuggestedAllow(
   toolName: string,
   input: Record<string, unknown>,
   toolMeta: ResolvedToolMetadata | undefined,
+  cwd?: string,
 ): SuggestedAllow {
   void toolName
   const entry: ToolRuleEntry = { verdict: "allow" }
@@ -43,27 +52,29 @@ export function buildSuggestedAllow(
   if (toolMeta) {
     const fields: Record<string, string[]> = {}
     for (const [aspectName, decl] of Object.entries(toolMeta.fields)) {
+      const isPathMode = cwd !== undefined && decl.mode === "path"
       for (const binding of decl.fields) {
         const field = fieldName(binding)
         const raw = input[field]
         if (raw === undefined || raw === null) continue
 
         if (isArrayBinding(binding)) {
-          // Array-mode binding: one line per element in the label; the
-          // persisted rule uses the joined value (matching
-          // coerceForMatch's coercion) so the full-string
-          // matcher locks on the same string.
+          // Array-mode binding: the persisted `fields` clause uses the
+          // joined value (matching `coerceForMatch`'s coercion) so the
+          // full-string matcher locks on the same string. The LABEL
+          // shows each element individually, relativized for path mode.
           if (!Array.isArray(raw)) continue
           const elements = raw.filter((v): v is string => typeof v === "string" && v.length > 0)
           if (elements.length === 0) continue
           fields[field] = [elements.join(" ")]
-          const rendered = elements.map((e) => formatValue(e)).join(", ")
+          const rendered = elements.map((e) => (isPathMode ? formatPathForDisplay(e, cwd) : formatValue(e))).join(", ")
           labelParts.push(`${aspectName}[]: ${rendered}`)
         } else {
           // Scalar-mode binding: coerce to a single string. The
-          // persisted rule stores the coerced form, and the matcher
-          // coerces incoming calls the same way, so full-string
-          // equality locks the call.
+          // persisted rule stores the coerced form (kept absolute for
+          // path mode — the tool-rule matcher compares it via
+          // genericPatternToRegex against the raw input). The label
+          // shows the same coerced form, relativized for path mode.
           let coerced: string | undefined
           try {
             coerced = coerceForMatch(raw)
@@ -74,7 +85,8 @@ export function buildSuggestedAllow(
           }
           if (!coerced || coerced.length === 0) continue
           fields[field] = [coerced]
-          labelParts.push(`${aspectName}: ${formatValue(coerced)}`)
+          const labelValue = isPathMode ? formatPathForDisplay(coerced, cwd) : formatValue(coerced)
+          labelParts.push(`${aspectName}: ${labelValue}`)
         }
       }
     }

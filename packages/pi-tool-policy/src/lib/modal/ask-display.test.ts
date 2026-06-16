@@ -48,8 +48,8 @@ describe("buildAskDisplay", () => {
         tags: ["readonly"],
         fields: { path: { mode: "path", fields: ["path"] } },
       }
-      const out = buildAskDisplay("read", { path: "/etc/hosts" }, meta)
-      expect(out.fieldLines).toEqual(["path: /etc/hosts"])
+      const out = buildAskDisplay("read", { path: "/etc/hosts" }, meta, "/etc")
+      expect(out.fieldLines).toEqual(["path: hosts"])
     })
 
     it("emits one line per element (array mode)", () => {
@@ -79,9 +79,14 @@ describe("buildAskDisplay", () => {
           destination: { mode: "path", fields: ["destination"] },
         },
       }
-      const out = buildAskDisplay("git_mv", { source: ["/src"], destination: "/dst" }, meta)
+      // Pick a cwd that puts BOTH paths outside (so both get the
+      // both-forms treatment) and avoid formatValue's quoting branch
+      // by keeping values with no whitespace.
+      const out = buildAskDisplay("git_mv", { source: ["/a/src"], destination: "/a/dst" }, meta, "/a/work")
       // source[] is array mode (per-element), destination is scalar.
-      expect(out.fieldLines).toEqual(["source: /src", "destination: /dst"])
+      // Both paths escape cwd, so both show both forms. The formatValue
+      // helper quotes values containing spaces.
+      expect(out.fieldLines).toEqual(['source: "`../src` (`/a/src`)"', 'destination: "`../dst` (`/a/dst`)"'])
     })
 
     it("skips aspects with no value in the input", () => {
@@ -134,6 +139,86 @@ describe("buildAskDisplay", () => {
       const out = buildAskDisplay("read", { url: "https://example.com" }, meta)
       // path aspect has no value, fallback kicks in and shows url.
       expect(out.fieldLines).toEqual(["url: https://example.com"])
+    })
+  })
+
+  describe("path-mode aspect with cwd", () => {
+    it("renders absolute input inside cwd as the relative form", () => {
+      const meta: ResolvedToolMetadata = {
+        tags: ["readonly"],
+        fields: { path: { mode: "path", fields: ["path"] } },
+      }
+      const out = buildAskDisplay("read", { path: "/repo/src/foo.ts" }, meta, "/repo")
+      expect(out.fieldLines).toEqual(["path: src/foo.ts"])
+    })
+
+    it("renders absolute input equal to cwd as '.'", () => {
+      const meta: ResolvedToolMetadata = {
+        tags: ["readonly"],
+        fields: { path: { mode: "path", fields: ["path"] } },
+      }
+      const out = buildAskDisplay("read", { path: "/repo" }, meta, "/repo")
+      expect(out.fieldLines).toEqual(["path: ."])
+    })
+
+    it("renders absolute input outside cwd as both forms (rel + abs)", () => {
+      const meta: ResolvedToolMetadata = {
+        tags: ["readonly"],
+        fields: { path: { mode: "path", fields: ["path"] } },
+      }
+      const out = buildAskDisplay("read", { path: "/parent/foo" }, meta, "/repo")
+      // formatValue quotes values containing spaces.
+      // path.relative("/repo", "/parent/foo") = "../parent/foo".
+      expect(out.fieldLines).toEqual(['path: "`../parent/foo` (`/parent/foo`)"'])
+    })
+
+    it("passes already-relative input through unchanged (no .. prepending)", () => {
+      const meta: ResolvedToolMetadata = {
+        tags: ["mutating"],
+        fields: { path: { mode: "path", fields: ["path"] } },
+      }
+      // A tool handed us a relative path (e.g. a forwarder). We must
+      // NOT mangle it via `path.relative` because the user would see
+      // a misleading "../../cwd/..." form.
+      const out = buildAskDisplay("custom", { path: "src/foo.ts" }, meta, "/repo")
+      expect(out.fieldLines).toEqual(["path: src/foo.ts"])
+    })
+
+    it("relativizes each element of an array-mode path binding", () => {
+      const meta: ResolvedToolMetadata = {
+        tags: ["mutating"],
+        fields: { path: { mode: "path", fields: [{ field: "paths", mode: "array" }] } },
+      }
+      const out = buildAskDisplay("git_add", { paths: ["/repo/a", "/repo/b"] }, meta, "/repo")
+      expect(out.fieldLines).toEqual(["path: a", "path: b"])
+    })
+
+    it("leaves non-path-mode aspects unchanged even when cwd is given", () => {
+      // The bug is specifically about path-mode aspects. A `url` or
+      // `bash` aspect value is not a path; relativizing it would be
+      // wrong.
+      const meta: ResolvedToolMetadata = {
+        tags: ["execution"],
+        fields: { command: { mode: "bash", fields: ["cmd"] } },
+      }
+      const out = buildAskDisplay("run", { cmd: ["ls", "-la", "/tmp"] }, meta, "/repo")
+      expect(out.fieldLines).toEqual(['command: "ls -la /tmp"'])
+    })
+
+    it("omits cwd in the fallback (no aspect metadata) — values pass through absolute", () => {
+      // The fallback path doesn't know which fields are paths, so
+      // even with a cwd we don't relativize.
+      const out = buildAskDisplay("pfs_unlink", { path: "/etc/hosts" }, undefined, "/etc")
+      expect(out.fieldLines).toEqual(["path: /etc/hosts"])
+    })
+
+    it("omits cwd when not provided — values pass through absolute (back-compat)", () => {
+      const meta: ResolvedToolMetadata = {
+        tags: ["readonly"],
+        fields: { path: { mode: "path", fields: ["path"] } },
+      }
+      const out = buildAskDisplay("read", { path: "/etc/hosts" }, meta)
+      expect(out.fieldLines).toEqual(["path: /etc/hosts"])
     })
   })
 })

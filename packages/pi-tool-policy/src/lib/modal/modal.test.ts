@@ -273,6 +273,28 @@ describe("buildRuleTypeOptions", () => {
     expect(aspectRows).toHaveLength(2)
     expect(aspectRows.map((r) => r.aspectName).sort()).toEqual(["destination", "source"])
   })
+
+  it("renders path-mode aspect prefill as cwd-relative in the label and the aspectPattern", () => {
+    const meta: ResolvedToolMetadata = {
+      tags: ["readonly"],
+      fields: { path: { mode: "path", fields: ["path"] } },
+    }
+    const rows = buildRuleTypeOptions(
+      "read",
+      { path: "/repo/src/foo.ts" },
+      meta,
+      {
+        aspectCovered: false,
+        toolCovered: false,
+      },
+      "/repo",
+    )
+    const aspectRow = rows.find((r) => r.ruleType === "aspect")
+    expect(aspectRow?.label).toBe("Aspect rule: path = src/foo.ts")
+    // The aspectPattern (what the user sees in the input modal and
+    // what gets persisted) is also cwd-relative.
+    expect(aspectRow?.aspectPattern).toBe("src/foo.ts")
+  })
 })
 
 describe("buildPolicyAskTitle", () => {
@@ -283,6 +305,7 @@ describe("buildPolicyAskTitle", () => {
       currentMode: "plan",
       input: { command: "ls" },
       toolMeta: undefined,
+      cwd: "/repo",
     })
     expect(title.startsWith("Allow tool call: bash?")).toBe(true)
     expect(title).toContain("Pick an action")
@@ -296,6 +319,7 @@ describe("buildPolicyAskTitle", () => {
       reason: "some reason",
       input: {},
       toolMeta: undefined,
+      cwd: "/repo",
     })
     expect(title).not.toContain("Tool policy:")
     expect(title).not.toContain("Reason:")
@@ -308,6 +332,7 @@ describe("buildPolicyAskTitle", () => {
       currentMode: "default",
       input: {},
       toolMeta: undefined,
+      cwd: "/repo",
     })
     expect(title).toContain("Mode: default · Tags: execution")
   })
@@ -319,6 +344,7 @@ describe("buildPolicyAskTitle", () => {
       currentMode: "default",
       input: {},
       toolMeta: undefined,
+      cwd: "/repo",
     })
     expect(title).toContain("Tags: (none)")
   })
@@ -330,6 +356,7 @@ describe("buildPolicyAskTitle", () => {
       currentMode: "default",
       input: {},
       toolMeta: undefined,
+      cwd: "/repo",
     })
     expect(title).toContain("\n")
   })
@@ -345,6 +372,7 @@ describe("buildPolicyAskTitle", () => {
       currentMode: "default",
       input: { cmd: ["ls"] },
       toolMeta: meta,
+      cwd: "/repo",
     })
     const headerIdx = title.indexOf("Allow tool call: run?")
     const fieldIdx = title.indexOf("command: ls")
@@ -365,6 +393,7 @@ describe("buildPolicyAskTitle", () => {
       currentMode: "default",
       input: { paths: [".env", "src/index.ts"] },
       toolMeta: meta,
+      cwd: "/repo",
     })
     expect(title).toContain("path: .env")
     expect(title).toContain("path: src/index.ts")
@@ -377,8 +406,46 @@ describe("buildPolicyAskTitle", () => {
       currentMode: "default",
       input: { path: "/etc/hosts" },
       toolMeta: undefined,
+      cwd: "/etc",
     })
     expect(title).toContain("path: /etc/hosts")
+  })
+
+  it("renders path-mode aspect values as cwd-relative in the title", () => {
+    const meta: ResolvedToolMetadata = {
+      tags: ["readonly"],
+      fields: { path: { mode: "path", fields: ["path"] } },
+    }
+    const title = buildPolicyAskTitle({
+      toolName: "read",
+      effectiveTags: ["readonly"],
+      currentMode: "default",
+      input: { path: "/repo/src/foo.ts" },
+      toolMeta: meta,
+      cwd: "/repo",
+    })
+    // The absolute path is converted to the cwd-relative form for
+    // the user-facing display.
+    expect(title).toContain("path: src/foo.ts")
+    expect(title).not.toContain("/repo/src/foo.ts")
+  })
+
+  it("renders path-mode aspect values that escape cwd as both forms", () => {
+    const meta: ResolvedToolMetadata = {
+      tags: ["readonly"],
+      fields: { path: { mode: "path", fields: ["path"] } },
+    }
+    const title = buildPolicyAskTitle({
+      toolName: "read",
+      effectiveTags: ["readonly"],
+      currentMode: "default",
+      input: { path: "/parent/foo" },
+      toolMeta: meta,
+      cwd: "/repo",
+    })
+    // formatValue quotes the both-forms label because it has spaces.
+    // path.relative("/repo", "/parent/foo") = "../parent/foo".
+    expect(title).toContain('path: "`../parent/foo` (`/parent/foo`)"')
   })
 })
 

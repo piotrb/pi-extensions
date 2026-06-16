@@ -12,6 +12,7 @@ import { coerceForMatch } from "../policy.ts"
 import type { AspectDeclaration, ResolvedToolMetadata, RuleResult, ToolRuleEntry, Verdict } from "../types.ts"
 import { fieldName, isArrayBinding } from "../types.ts"
 import { buildAskDisplay, formatValue } from "./ask-display.ts"
+import { formatPathForDisplay } from "./path-display.ts"
 import { openPolicyInputModal } from "./policy-input-modal.ts"
 import { buildSuggestedAllow } from "./suggested-allow.ts"
 
@@ -30,6 +31,14 @@ export interface PolicyAskArgs {
   currentMode: string
   input: Record<string, unknown>
   toolMeta: ResolvedToolMetadata | undefined
+  /**
+   * Project root. Used by display-side helpers to convert absolute
+   * path-mode aspect values to cwd-relative form (see
+   * `formatPathForDisplay`). The matcher does its own relativization,
+   * so this only affects what the user SEES — never what gets
+   * persisted.
+   */
+  cwd: string
   /**
    * The rule trail from the matcher. Each entry is one rule's contribution
    * (layer, key, verdict, reason, status). The policy ask prompt surfaces
@@ -109,6 +118,10 @@ interface RuleTypeRow {
  *   - aspect rules for aspects that are already covered by an existing rule
  *   - tool rules if the tool is already covered
  *
+ * `cwd` is the project root. When provided AND an aspect's mode is
+ * `"path"`, both the aspect prefill and the tool-rule label are
+ * converted to cwd-relative form for display.
+ *
  * Exported for data-shaping tests.
  */
 export function buildRuleTypeOptions(
@@ -116,17 +129,20 @@ export function buildRuleTypeOptions(
   input: Record<string, unknown>,
   toolMeta: ResolvedToolMetadata | undefined,
   coverage: CoverageReport,
+  cwd?: string,
 ): RuleTypeRow[] {
   const rows: RuleTypeRow[] = []
 
   // 1. Aspect rules — one row per declared aspect with a non-empty value.
   if (toolMeta && !coverage.aspectCovered) {
     for (const [aspectName, decl] of Object.entries(toolMeta.fields)) {
-      const prefill = computeAspectPrefill(decl, input)
+      const prefill = computeAspectPrefill(decl, input, cwd)
       if (prefill === undefined) continue
+      const displayValue =
+        decl.mode === "path" && cwd !== undefined ? formatPathForDisplay(prefill, cwd) : formatValue(prefill)
       rows.push({
         value: `aspect:${aspectName}`,
-        label: `Aspect rule: ${aspectName} = ${formatValue(prefill)}`,
+        label: `Aspect rule: ${aspectName} = ${displayValue}`,
         ruleType: "aspect",
         aspectName,
         aspectPattern: prefill,
@@ -136,7 +152,7 @@ export function buildRuleTypeOptions(
 
   // 2. Tool rule — single row, always offered unless already covered.
   if (!coverage.toolCovered) {
-    const suggested = buildSuggestedAllow(toolName, input, toolMeta)
+    const suggested = buildSuggestedAllow(toolName, input, toolMeta, cwd)
     const summary = suggested.label ? ` (${suggested.label})` : ""
     rows.push({
       value: "tool",
@@ -153,8 +169,21 @@ export function buildRuleTypeOptions(
  * bindings it's the coerced single string; for array-mode bindings
  * the joined elements with a space (matching how `coerceForMatch`
  * joins arrays). Returns undefined if there's no string-coercible value.
+ *
+ * When `cwd` is provided AND the aspect's `mode` is `"path"`, the
+ * returned prefill is in cwd-relative form. This matters because the
+ * prefill is what the user sees in the text-input prompt and (if
+ * accepted) what gets persisted as the aspect pattern; the matcher's
+ * `path` branch (`aspects.ts`) picomatches the pattern against
+ * `relative(cwd, value)`, so a relative pattern is the natural form
+ * for the user to write and edit.
  */
-function computeAspectPrefill(decl: AspectDeclaration, input: Record<string, unknown>): string | undefined {
+function computeAspectPrefill(
+  decl: AspectDeclaration,
+  input: Record<string, unknown>,
+  cwd: string | undefined,
+): string | undefined {
+  const isPathMode = cwd !== undefined && decl.mode === "path"
   for (const binding of decl.fields) {
     const field = fieldName(binding)
     const raw = input[field]
@@ -163,11 +192,12 @@ function computeAspectPrefill(decl: AspectDeclaration, input: Record<string, unk
       if (!Array.isArray(raw)) continue
       const elements = raw.filter((v): v is string => typeof v === "string" && v.length > 0)
       if (elements.length === 0) continue
-      return elements.join(" ")
+      const joined = elements.join(" ")
+      return isPathMode ? formatPathForDisplay(joined, cwd) : joined
     }
     try {
       const s = coerceForMatch(raw)
-      if (s && s.length > 0) return s
+      if (s && s.length > 0) return isPathMode ? formatPathForDisplay(s, cwd) : s
     } catch {
       continue
     }
@@ -206,7 +236,7 @@ function renderRuleLine(rule: RuleResult): string {
 export function buildPolicyAskTitle(args: PolicyAskArgs): string {
   const lines: string[] = []
   lines.push(`Allow tool call: ${args.toolName}?`)
-  const fieldDisplay = buildAskDisplay(args.toolName, args.input, args.toolMeta)
+  const fieldDisplay = buildAskDisplay(args.toolName, args.input, args.toolMeta, args.cwd)
   for (const fl of fieldDisplay.fieldLines) {
     lines.push(fl)
   }
@@ -454,7 +484,7 @@ async function pickRuleType(
   opts: PickRuleTypeOptions,
 ): Promise<MenuAction> {
   while (true) {
-    const allRows = buildRuleTypeOptions(args.toolName, args.input, args.toolMeta, opts.coverage)
+    const allRows = buildRuleTypeOptions(args.toolName, args.input, args.toolMeta, opts.coverage, args.cwd)
     const rows = opts.stripToolSummary
       ? allRows.map((r) => (r.ruleType === "tool" ? { ...r, label: `Tool rule: ${opts.toolName}` } : r))
       : allRows
@@ -610,7 +640,7 @@ async function runSaveFlow(ctx: ExtensionContext, args: PolicyAskArgs, coverage:
     }
 
     // tool rule — suggested entry from the actual call's args.
-    const suggested = buildSuggestedAllow(args.toolName, args.input, args.toolMeta)
+    const suggested = buildSuggestedAllow(args.toolName, args.input, args.toolMeta, args.cwd)
     return {
       kind: "result",
       result: {

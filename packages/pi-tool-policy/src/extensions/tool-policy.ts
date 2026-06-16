@@ -216,6 +216,7 @@ export default function (pi: ExtensionAPI): void {
             currentMode,
             input: event.input,
             toolMeta: toolMetadata.metadata.get(event.toolName),
+            cwd: ctx.cwd,
             ruleTrail: decision.ruleTrail,
           },
           coverage,

@@ -1,6 +1,7 @@
 import { coerceForMatch } from "../policy.ts"
 import type { AspectDeclaration, ResolvedToolMetadata } from "../types.ts"
 import { fieldName, isArrayBinding } from "../types.ts"
+import { formatPathForDisplay } from "./path-display.ts"
 
 /**
  * What the ask UI shows about a single tool call. A flat list of
@@ -38,6 +39,7 @@ export function buildAskDisplay(
   toolName: string,
   input: Record<string, unknown>,
   toolMeta: ResolvedToolMetadata | undefined,
+  cwd?: string,
 ): AskDisplay {
   void toolName
   const fields: DisplayField[] = []
@@ -45,7 +47,7 @@ export function buildAskDisplay(
   // 1. Aspect-decorated fields (in declaration order).
   if (toolMeta) {
     for (const [aspectName, decl] of Object.entries(toolMeta.fields)) {
-      for (const value of readAspectValues(decl, input)) {
+      for (const value of readAspectValues(decl, input, cwd)) {
         fields.push({ key: aspectName, value: formatValue(value) })
       }
     }
@@ -70,9 +72,15 @@ export function buildAskDisplay(
  * One string per non-empty element. For scalar-mode bindings the
  * returned array has length 0 or 1 (the coerced value, if any).
  * For array-mode bindings it has one entry per input element.
+ *
+ * When `cwd` is provided AND the aspect's `mode` is `"path"`, each
+ * absolute value is converted to a cwd-relative form for display (see
+ * `formatPathForDisplay`). Non-path-mode aspects and non-absolute
+ * values pass through unchanged.
  */
-function readAspectValues(decl: AspectDeclaration, input: Record<string, unknown>): string[] {
+function readAspectValues(decl: AspectDeclaration, input: Record<string, unknown>, cwd: string | undefined): string[] {
   const out: string[] = []
+  const isPathMode = cwd !== undefined && decl.mode === "path"
   for (const binding of decl.fields) {
     const field = fieldName(binding)
     const raw = input[field]
@@ -85,14 +93,17 @@ function readAspectValues(decl: AspectDeclaration, input: Record<string, unknown
       for (const element of raw) {
         if (typeof element !== "string") continue
         if (element.length === 0) continue
-        out.push(element)
+        out.push(isPathMode ? formatPathForDisplay(element, cwd) : element)
       }
       continue
     }
 
-    // Scalar-mode binding: coerce (joins string[] with " ").
+    // Scalar-mode binding: coerce (joins string[] with " "). For
+    // path-mode aspects the coerced form (typically already absolute)
+    // is relativized; for non-path aspects the coercion is the only
+    // transformation.
     const coerced = coerceForMatch(raw)
-    if (coerced && coerced.length > 0) out.push(coerced)
+    if (coerced && coerced.length > 0) out.push(isPathMode ? formatPathForDisplay(coerced, cwd) : coerced)
   }
   return out
 }
