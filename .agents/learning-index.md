@@ -7,7 +7,7 @@ circumstances to use it, so a reader can route without loading the skill itself.
 The index is a derived artifact. After **any** edit to a learning (create, update, or retire),
 update the matching entry here. Do not leave the index inconsistent with the skills it dispatches to.
 
-Referenced from `AGENTS.md` via `@.agents/learning-index.md`.
+Referenced from `AGENTS.md`. (The `@`-references in this index are relative to this file's directory — see the `learning-management` skill for the convention.)
 
 ## Dispatch tiers
 
@@ -20,7 +20,7 @@ This index uses a two-tier dispatch system. See `pi-skill-dispatch-tiers` for th
 
 ### `pi-package-scaffold`
 
-@.agents/skills/pi-package-scaffold/SKILL.md
+@skills/pi-package-scaffold/SKILL.md
 
 Scaffolds a fresh `pi-<name>` extension package in the workspace. Reads the most similar existing
 peer under `packages/` and mirrors its structure, applying the minimum set of changes for the new
@@ -29,7 +29,7 @@ migrating an out-of-tree package into the workspace.
 
 ### `pi-extension-toolchain`
 
-@.agents/skills/pi-extension-toolchain/SKILL.md
+@skills/pi-extension-toolchain/SKILL.md
 
 The TypeScript + ESLint + Prettier toolchain for this pnpm workspace — tsconfig hierarchy,
 ESLint config, script naming conventions, and key gotchas. Use this skill when setting up or
@@ -37,7 +37,7 @@ auditing the build toolchain for any package, or when chasing a toolchain failur
 
 ### `pi-monorepo-overview`
 
-@.agents/skills/pi-monorepo-overview/SKILL.md
+@skills/pi-monorepo-overview/SKILL.md
 
 The pi-extensions monorepo at a glance — flat layout, no build step, plugin ecosystem, project
 map, and the canonical command set. Use this skill when orienting to the repo, when you need

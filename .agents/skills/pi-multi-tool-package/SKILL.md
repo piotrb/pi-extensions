@@ -88,7 +88,7 @@ The description is the routing signal — the LLM reads it to decide which tool 
 
 ```ts
 function makeExecutor(tool: ToolName) {
-  return async (_id: string, p: Static<typeof GIT_SCHEMAS[ToolName]>, _ctx: Context) => {
+  return async (_id: string, p: Static<(typeof GIT_SCHEMAS)[ToolName]>, _ctx: Context) => {
     // branch on `tool` for subcommand-specific argument handling
     return { content: [{ type: "text", text: stdout }] }
   }
@@ -114,5 +114,5 @@ The factory is a closure over `tool`, so each `execute` function knows which sub
 
 ## Related
 
-- @.agents/skills/pi-register-tool/SKILL.md
-- @.agents/skills/pi-package-scaffold/SKILL.md
+- `pi-register-tool`
+- `pi-package-scaffold`

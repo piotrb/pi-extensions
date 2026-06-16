@@ -81,5 +81,5 @@ Inside `packages/pi-hackery/`, every published skill has a corresponding base. T
 
 ## Related
 
-- @.agents/skills/base-publisher-hand-off/SKILL.md
-- @.agents/skills/pi-package-scaffold/SKILL.md
+- `base-publisher-hand-off`
+- `pi-package-scaffold`

@@ -60,5 +60,5 @@ After every edit, run the scoped filter — `pnpm turbo run typecheck test --fil
 
 ## Related
 
-- @.agents/skills/pi-extension-toolchain/SKILL.md
-- @.agents/skills/pi-package-scaffold/SKILL.md
+- `pi-extension-toolchain`
+- `pi-package-scaffold`

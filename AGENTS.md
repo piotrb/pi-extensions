@@ -16,7 +16,7 @@ pnpm --filter <pkg> run test
 pnpm run check
 ```
 
-`check` shape: Turbo runs the four tasks declared in `turbo.json` — `//#format:check` and `//#lint` once at the repo root, then `typecheck` and `test` per package in parallel. Cache hits make repeat runs near-instant. See @.agents/skills/pi-extension-toolchain/SKILL.md for the full Turbo conventions.
+`check` shape: Turbo runs the four tasks declared in `turbo.json` — `//#format:check` and `//#lint` once at the repo root, then `typecheck` and `test` per package in parallel. Cache hits make repeat runs near-instant. See `pi-extension-toolchain` for the full Turbo conventions.
 
 If `pnpm check` is not available (e.g. `node_modules` not installed), run:
 
@@ -100,7 +100,7 @@ These are derived from repeated cross-session corrections. Read this section bef
 - **Try `eslint --fix` before manual edits.** For import order, type-imports, and formatting, run `pnpm turbo //#lint` (or `eslint . --fix` on a file) before hand-editing. Most of these are auto-fixed.
 - **Never auto-run interactive or user-facing tools.** `changeset`, `npm login`, anything that prompts — leave it for the user. The agent runs non-interactive commands only.
 - **Verify after every edit and every retry.** `edit` only checks that `oldText` was found — not that the result is correct. After every `edit` call, read the affected region (5-10 lines) to confirm the file's literal state. When retrying a failing `run` or any other call, compare the new arguments literally to the previous attempt; if identical, the mistake is unchanged and retrying the same form is wasted work.
-- **Read `@`-referenced files directly.** When a user message contains `@<path>` (e.g. `@AGENTS.md`, `@about-turbo.md`, `@.agents/learning-index.md`), the path is the literal file location — read it with the `read` tool. Do **not** dispatch a search subagent, do not guess the path, do not glob for it. `@` references from a user message resolve the same way they resolve inside `AGENTS.md` (relative to the file the reference appears in, or project root for direct user input). The `read` tool is always the right call.
+- **Read `@`-referenced files directly.** When a user message contains an `@`-prefixed path (e.g. pointing at an `AGENTS.md` or a `.agents/skills/.../SKILL.md`), the path is the literal file location — read it with the `read` tool. Do **not** dispatch a search subagent, do not guess the path, do not glob for it. `@` references from a user message resolve the same way they resolve inside `AGENTS.md` (relative to the file the reference appears in, or project root for direct user input). The `read` tool is always the right call.
 
 ### Skill scope rules
 

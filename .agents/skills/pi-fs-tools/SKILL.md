@@ -102,5 +102,5 @@ Do not use it for:
 
 ## Related
 
-- @.agents/skills/pi-register-tool/SKILL.md
-- @.agents/skills/pi-package-scaffold/SKILL.md
+- `pi-register-tool`
+- `pi-package-scaffold`

@@ -85,6 +85,6 @@ If the knowledge fits comfortably in the `working-with-<package>` core skill, do
 
 ## Related
 
-- @.agents/skills/pi-package-scaffold/SKILL.md
-- @.agents/skills/pi-read-package-architecture/SKILL.md
-- @.agents/skills/pi-skill-dispatch-tiers/SKILL.md
+- `pi-package-scaffold`
+- `pi-read-package-architecture`
+- `pi-skill-dispatch-tiers`

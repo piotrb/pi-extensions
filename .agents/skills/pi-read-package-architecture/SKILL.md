@@ -52,4 +52,4 @@ Skip the read when:
 
 ## Related
 
-- @.agents/skills/pi-hackery-folder-layout/SKILL.md
+- `pi-hackery-folder-layout`

@@ -25,6 +25,20 @@ After **any** edit to a learning (create, update, or retire), review `.agents/le
 
 The dispatch index is referenced from `AGENTS.md`'s Skills section as `@.agents/learning-index.md` — a single `@`-reference, no summary, no per-skill list. `AGENTS.md` does not duplicate the index; the `@` reference is the entry point.
 
+## `@`-reference paths are relative to the containing file
+
+`@`-reference paths are always relative to the file containing the reference, not the project root. The context-preloader resolves every `@`-reference against the directory of that file, then recursively into each loaded file (up to `MAX_DEPTH=5`, deduped). There is no global address space; the path is always local to the containing file. The three canonical shapes are:
+
+- From `AGENTS.md` (project root) to the index: `@.agents/learning-index.md`.
+- From `.agents/learning-index.md` to a core skill: `@skills/<name>/SKILL.md` (the index lives in `.agents/`, so `skills/...` resolves to `.agents/skills/<name>/SKILL.md`).
+- From one skill at `.agents/skills/<this>/SKILL.md` to a sibling skill: `@../<other>/SKILL.md` (climb out of the current skill's folder, then descend into the sibling).
+
+Writing `@.agents/skills/<other>/SKILL.md` inside any skill at `.agents/skills/<this>/SKILL.md` is a bug — the preloader resolves it to `.agents/skills/<this>/.agents/skills/<other>/SKILL.md` and logs it as unreadable. The same doubled-prefix trap applies anywhere a reference is written with a path rooted higher than the containing file.
+
+## `@`-references are for preloading, not for "see also" pointers
+
+The context-preloader follows every `@`-reference it finds. A `@`-reference to a sibling skill pulls that skill's body into the system prompt at session start. That is the wrong tool for "the agent may also want to know about this" — a `Related` section (or any inline "see also" pointer in skill prose) is **not** a preload directive, it is a dispatch hint. Write the pointer as a backtick-quoted skill name (`` `<skill-name>` ``) and let the agent consult the index and load on demand. The index is the only hub; skills do not preload their siblings.
+
 ## What you do not do
 
 - Do not create, update, or retire learnings.

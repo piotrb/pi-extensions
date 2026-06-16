@@ -78,12 +78,12 @@ These rules apply to every `pi-*` package in this workspace. They are non-negoti
 - Do not write `package.json` from a memorized template. Read a peer, lift its structure.
 - Do not propagate fields from one peer to another without justification.
 - Do not add `pi.toolMetadata` for tools that do not have path/url/bash/glob/regex aspects.
-- Do not trim `peerDependencies` to *zero* just because the package is empty — but do trim to actual imports.
+- Do not trim `peerDependencies` to _zero_ just because the package is empty — but do trim to actual imports.
 
 ## Related
 
-- @.agents/skills/pi-register-tool/SKILL.md
-- @.agents/skills/pi-multi-tool-package/SKILL.md
-- @.agents/skills/pi-fs-tools/SKILL.md
-- @.agents/skills/pi-lifecycle-hooks/SKILL.md
-- @.agents/skills/pi-hackery-folder-layout/SKILL.md
+- `pi-register-tool`
+- `pi-multi-tool-package`
+- `pi-fs-tools`
+- `pi-lifecycle-hooks`
+- `pi-hackery-folder-layout`

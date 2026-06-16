@@ -11,15 +11,7 @@ You are deciding where a new skill belongs, or auditing an existing one's tier a
 
 The agent always sees these. They are preloaded by `pi-context-preloader`, which follows `@`-references in `AGENTS.md` core list, then in the loaded files (recursively up to `MAX_DEPTH=5`).
 
-A core skill's entry in `.agents/learning-index.md` has an `@`-reference:
-
-```markdown
-### `pi-package-scaffold`
-
-@.agents/skills/pi-package-scaffold/SKILL.md
-
-Scaffolds a fresh `pi-<name>` extension package...
-```
+A core skill's entry in `.agents/learning-index.md` carries an `@`-reference on its own line. The preloader pattern matches `@` plus a path with a file extension, and resolves it relative to the file containing the reference. Inside the index (which lives in `.agents/`) the canonical shape is `@` followed by `skills/<name>/SKILL.md`. For example, the `pi-package-scaffold` core entry has the heading followed by a line that starts with `@` and the path `skills/pi-package-scaffold/SKILL.md`. See `learning-management` for the resolution rule and the trap of writing the path project-root-relative (which would resolve to `.agents/.agents/skills/...` and miss).
 
 The `@`-reference is the signal. The preloader follows it; the skill is loaded.
 
@@ -43,7 +35,7 @@ No `@`-reference → not preloaded. The description is the routing signal; the a
 
 The index is the single place where tier assignments live. The preloader reads the index; the `@`-references it sees tell the preloader what to preload.
 
-`AGENTS.md` core list has just one entry: `@.agents/learning-index.md`. The transitive `@`-references in the index do the rest. The preloader follows them.
+`AGENTS.md` core list has just one entry: a single `@`-reference to `.agents/learning-index.md` (project-root-relative, since `AGENTS.md` lives at the root). The transitive `@`-references in the index do the rest. The preloader follows them.
 
 ## Criteria
 
@@ -68,7 +60,7 @@ Move the `@`-reference into the index entry:
 
 1. Open `.agents/learning-index.md`.
 2. Find the skill's `### \`<name>\`` entry.
-3. Add `@.agents/skills/<name>/SKILL.md` on the line after the heading.
+3. Add `@skills/<name>/SKILL.md` on the line after the heading (the path is relative to the index file itself, which lives in `.agents/`).
 4. Verify the `@`-reference resolves to an existing file.
 
 ## Demoting a skill to conditional

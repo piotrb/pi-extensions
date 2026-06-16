@@ -60,7 +60,7 @@ Use for system prompt injection, context augmentation, or any per-turn work that
 
 ```ts
 pi.on("before_agent_start", (event) => {
-  if (injectedThisSession) return  // no-op after the first turn
+  if (injectedThisSession) return // no-op after the first turn
   injectedThisSession = true
   return { systemPrompt: event.systemPrompt + cached }
 })
@@ -119,4 +119,4 @@ The command reads the closure cache and displays it via `ctx.ui.notify`.
 
 ## Related
 
-- @.agents/skills/pi-package-scaffold/SKILL.md
+- `pi-package-scaffold`
