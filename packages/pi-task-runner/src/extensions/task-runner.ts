@@ -335,6 +335,7 @@ export default function (pi: ExtensionAPI) {
         cwd: workingDir,
         signal,
         env: params.env,
+        timeoutMs: 300 * 1000,
         onSpawn: (child) => {
           runningTasks.set(_toolCallId, {
             toolCallId: _toolCallId,
