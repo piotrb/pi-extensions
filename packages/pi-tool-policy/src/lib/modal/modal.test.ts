@@ -3,8 +3,7 @@ import { describe, expect, it } from "vitest"
 
 import type { DirectoryPromptArgs } from "../directory-permissions.ts"
 import type { AggregateResult } from "../tool-metadata.ts"
-import type { ResolvedToolMetadata } from "../types.ts"
-import type { Config } from "../types.ts"
+import type { Config, ResolvedToolMetadata, RuleResult } from "../types.ts"
 import {
   buildDebugOptions,
   dumpConfig,
@@ -17,8 +16,10 @@ import { buildDirectoryOptions, buildDirectoryTitle } from "./directory-permissi
 import {
   buildPolicyAskTitle,
   buildRuleTypeOptions,
+  buildTargetModeLabels,
   buildTopLevelOptions,
   pickRuleTypeReducer,
+  sortTrailForDisplay,
 } from "./policy-ask-modal.ts"
 import { buildToolPolicyOptions } from "./tool-policy-modal.ts"
 
@@ -297,6 +298,93 @@ describe("buildRuleTypeOptions", () => {
   })
 })
 
+/**
+ * Synthetic RuleResult builder for the sort tests. The matcher
+ * populates these fields from real config; the sort helper only
+ * cares about layer, status, and (for stable-sort tiebreakers) the
+ * rule's position in the input array.
+ */
+function makeRule(layer: RuleResult["layer"], status: RuleResult["status"], key: string): RuleResult {
+  return { layer, key, verdict: "ask", status }
+}
+
+describe("sortTrailForDisplay", () => {
+  it("returns the applied rule first, regardless of its position in the input", () => {
+    // Input order: tag (shadowed) → aspect (applied) → tool (shadowed) → default (shadowed).
+    // The sort puts the aspect `applied` first, then the rest by
+    // layer priority (tool > tag > default).
+    const trail = [
+      makeRule("tag", "shadowed", "execution"),
+      makeRule("aspect", "applied", "bash_cmd"),
+      makeRule("tool", "shadowed", "bash"),
+      makeRule("default", "shadowed", "<default>"),
+    ]
+    const sorted = sortTrailForDisplay(trail)
+    expect(sorted[0]?.key).toBe("bash_cmd")
+    expect(sorted[0]?.status).toBe("applied")
+  })
+
+  it("groups non-applied rules by layer priority: aspect > tool > tag > default", () => {
+    // All shadowed, but the input order is the matcher's evaluation
+    // order (tag → aspect → tool → default). The display order
+    // re-orders by layer priority.
+    const trail = [
+      makeRule("tag", "shadowed", "execution"),
+      makeRule("aspect", "shadowed", "path"),
+      makeRule("tool", "shadowed", "read"),
+      makeRule("default", "shadowed", "<default>"),
+    ]
+    const sorted = sortTrailForDisplay(trail)
+    expect(sorted.map((r) => r.layer)).toEqual(["aspect", "tool", "tag", "default"])
+  })
+
+  it("preserves evaluation order within a layer (stable sort)", () => {
+    // Two aspect rules in the same layer. Both shadowed, both
+    // aspect layer. The input order is the matcher's evaluation
+    // order (path1 first, path2 second). The sort must preserve
+    // that order — the user reads top-to-bottom, and the order
+    // reflects which rule the matcher hit first.
+    const trail = [
+      makeRule("aspect", "shadowed", "path1"),
+      makeRule("aspect", "shadowed", "path2"),
+      makeRule("tag", "shadowed", "readonly"),
+    ]
+    const sorted = sortTrailForDisplay(trail)
+    // path1 comes before path2 (evaluation order); the tag rule
+    // comes last (less specific layer).
+    expect(sorted[0]?.key).toBe("path1")
+    expect(sorted[1]?.key).toBe("path2")
+    expect(sorted[2]?.key).toBe("readonly")
+  })
+
+  it("treats noop and shadowed as the same display priority", () => {
+    // `noop` and `shadowed` are both "did not contribute to the
+    // decision" — they're debug context. The display groups them
+    // together (priority 1 each), within-layer order preserved.
+    const trail = [
+      makeRule("tag", "noop", "metadata"),
+      makeRule("tag", "shadowed", "execution"),
+      makeRule("aspect", "applied", "bash_cmd"),
+    ]
+    const sorted = sortTrailForDisplay(trail)
+    expect(sorted[0]?.key).toBe("bash_cmd")
+    // tag rules retain their input order.
+    expect(sorted[1]?.key).toBe("metadata")
+    expect(sorted[2]?.key).toBe("execution")
+  })
+
+  it("returns the input untouched for an empty trail", () => {
+    expect(sortTrailForDisplay([])).toEqual([])
+  })
+
+  it("does not mutate the input array", () => {
+    const trail = [makeRule("tag", "shadowed", "execution"), makeRule("default", "applied", "<default>")]
+    const inputSnapshot = [...trail]
+    sortTrailForDisplay(trail)
+    expect(trail).toEqual(inputSnapshot)
+  })
+})
+
 describe("buildPolicyAskTitle", () => {
   it("renders the 'Allow tool call: X?' header as the first line", () => {
     const title = buildPolicyAskTitle({
@@ -446,6 +534,53 @@ describe("buildPolicyAskTitle", () => {
     // formatValue quotes the both-forms label because it has spaces.
     // path.relative("/repo", "/parent/foo") = "../parent/foo".
     expect(title).toContain('path: "`../parent/foo` (`/parent/foo`)"')
+  })
+
+  it("sorts the rule trail top-down by priority: applied first, then by layer specificity", () => {
+    // Build a trail in MATCHER evaluation order (tag → aspect →
+    // tool → default), with the aspect rule being the applied
+    // winner. The rendered title should sort this so the aspect
+    // (applied) is the first rule the user reads, not the tag
+    // rule that appears earlier in the input.
+    const title = buildPolicyAskTitle({
+      toolName: "bash",
+      effectiveTags: ["execution"],
+      currentMode: "default",
+      input: { command: "ls" },
+      toolMeta: undefined,
+      cwd: "/repo",
+      ruleTrail: [
+        { layer: "tag", key: "execution", verdict: "ask", status: "shadowed" },
+        { layer: "aspect", key: "bash_cmd", aspect: "bash_cmd", pattern: "ls *", verdict: "ask", status: "applied" },
+        { layer: "tool", key: "bash", verdict: "ask", status: "shadowed" },
+        { layer: "default", key: "<default>", verdict: "ask", status: "noop" },
+      ],
+    })
+    // Find the position of each rule's first occurrence in the
+    // title. The aspect `applied` rule should be FIRST among the
+    // rules, not the tag rule (which was first in the input).
+    const aspectIdx = title.indexOf("aspect bash_cmd (ls *)")
+    const tagIdx = title.indexOf("tag:execution")
+    const toolIdx = title.indexOf("tool:bash")
+    const defaultIdx = title.indexOf("default:<default>")
+    expect(aspectIdx).toBeGreaterThan(0)
+    expect(tagIdx).toBeGreaterThan(aspectIdx) // tag comes AFTER the applied aspect
+    expect(toolIdx).toBeGreaterThan(aspectIdx)
+    expect(defaultIdx).toBeGreaterThan(toolIdx)
+  })
+
+  it("renders the [shadowed] status icon (not [suppressed]) for shadowed rules", () => {
+    const title = buildPolicyAskTitle({
+      toolName: "bash",
+      effectiveTags: ["execution"],
+      currentMode: "default",
+      input: { command: "ls" },
+      toolMeta: undefined,
+      cwd: "/repo",
+      ruleTrail: [{ layer: "tag", key: "execution", verdict: "ask", status: "shadowed" }],
+    })
+    expect(title).toContain("[shadowed]")
+    expect(title).not.toContain("[suppressed]")
   })
 })
 
@@ -691,5 +826,42 @@ describe("pickRuleTypeReducer", () => {
     // non-empty rows means we always go to the row/back/cancel branch.
     const result = pickRuleTypeReducer([toolRow], { aspectCovered: true, toolCovered: true }, toolRow.label)
     expect(result).toEqual({ kind: "row", row: toolRow })
+  })
+})
+
+describe("buildTargetModeLabels", () => {
+  it("returns [] for an empty chain", () => {
+    expect(buildTargetModeLabels([])).toEqual([])
+  })
+
+  it("labels the first entry as the current mode (for a single-mode chain)", () => {
+    expect(buildTargetModeLabels(["only"])).toEqual(["only (current mode — applies only here)"])
+  })
+
+  it("labels the root entry as the root for a two-mode chain", () => {
+    expect(buildTargetModeLabels(["edit", "readonly"])).toEqual([
+      "edit (current mode — applies only here)",
+      "readonly (root — applies to this and every mode that inherits)",
+    ])
+  })
+
+  it("labels middle entries as parents for a three-mode chain", () => {
+    expect(buildTargetModeLabels(["edit", "default", "readonly"])).toEqual([
+      "edit (current mode — applies only here)",
+      "default (parent — applies to this and modes that inherit from it)",
+      "readonly (root — applies to this and every mode that inherits)",
+    ])
+  })
+
+  it("preserves the chain order in the labels (most-specific first)", () => {
+    // The chain is the same order as `computeExtendsChain` returns:
+    // current → parents → root. The labels must appear in that
+    // exact order so the picker shows the most-specific mode at the
+    // top (matching the modal's reading order convention).
+    const labels = buildTargetModeLabels(["a", "b", "c", "d"])
+    expect(labels[0]).toContain("a (current mode")
+    expect(labels[1]).toContain("b (parent")
+    expect(labels[2]).toContain("c (parent")
+    expect(labels[3]).toContain("d (root")
   })
 })

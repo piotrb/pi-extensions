@@ -2,6 +2,8 @@ import type { ExtensionAPI, ExtensionContext, ToolCallEventResult, ToolInfo } fr
 
 import { buildCoverageReport } from "../lib/coverage.ts"
 import { checkAndPrompt, DirectoryPermissionsState } from "../lib/directory-permissions.ts"
+import { computeExtendsChain } from "../lib/mode-controller.ts"
+import { buildNoUIBlockReason } from "../lib/no-ui-block.ts"
 import { openDirectoryPermissionsModal } from "../lib/modal/directory-permissions-modal.ts"
 import { openPolicyAskModal } from "../lib/modal/policy-ask-modal.ts"
 import { openToolPolicyModal } from "../lib/modal/tool-policy-modal.ts"
@@ -200,6 +202,23 @@ export default function (pi: ExtensionAPI): void {
       // open, this handler is pending — the tool won't run. The modal
       // returns the user's choice; we then translate to block/allow.
       if (decision.action === "ask") {
+        // No-UI guard: when the matcher needs to ask, but the calling
+        // context has no UI (subagent, print mode, JSON mode, RPC
+        // client that doesn't handle extension_ui_request), the
+        // interactive modal can't reach the user. Calling
+        // `ctx.ui.select(...)` would either hang (RPC client that
+        // ignores the request) or resolve immediately with
+        // `undefined` (print/json mode), which the policy treats as
+        // a dismissal and blocks anyway — the user gets a generic
+        // "Denied by user" reason that doesn't tell them what
+        // happened or what to do. Block with an actionable reason
+        // instead. The subagent (or whoever ran the call) gets a
+        // reason that names the tool, the matched rule, and the two
+        // ways to unblock (pre-approve the rule in config, or re-run
+        // from a top-level session).
+        if (!ctx.hasUI) {
+          return { block: true, reason: buildNoUIBlockReason(event, decision, currentMode) }
+        }
         const coverage = buildCoverageReport(
           event.toolName,
           event.input,
@@ -207,6 +226,14 @@ export default function (pi: ExtensionAPI): void {
           activeMode,
           ctx.cwd,
         )
+        // The save-rule modal asks the user which mode in the current
+        // mode's inheritance chain to write a new rule into. The
+        // chain must be computed against the RAW (pre-resolve) config
+        // because the loader's `resolveExtends` strips the `extends`
+        // field from the resolved modes. Without the raw config, the
+        // chain would always be a single entry (the current mode) and
+        // the target-mode picker would never appear.
+        const extendsChain = computeExtendsChain(config, currentMode)
         const askResult = await openPolicyAskModal(
           ctx,
           {
@@ -218,6 +245,7 @@ export default function (pi: ExtensionAPI): void {
             toolMeta: toolMetadata.metadata.get(event.toolName),
             cwd: ctx.cwd,
             ruleTrail: decision.ruleTrail,
+            extendsChain,
           },
           coverage,
         )
@@ -250,16 +278,22 @@ export default function (pi: ExtensionAPI): void {
           const rawVerdict = save.entry.verdict
           const verdict: Verdict = typeof rawVerdict === "string" ? rawVerdict : rawVerdict.verdict
           try {
+            // `save.targetMode` is the mode the user picked in the
+            // target-mode picker (or the current mode when the picker
+            // was skipped because the chain has length 1). Writing
+            // to a parent mode makes the rule apply to every mode
+            // that inherits from it.
+            const targetMode = save.targetMode
             if (save.ruleType === "aspect" && save.aspectName && save.aspectPattern !== undefined) {
-              await addAspectRule(save.scope, ctx.cwd, currentMode, save.aspectName, save.aspectPattern, rawVerdict)
+              await addAspectRule(save.scope, ctx.cwd, targetMode, save.aspectName, save.aspectPattern, rawVerdict)
               ctx.ui.notify(
-                `${verdict === "allow" ? "Allowed" : "Denied"} ${event.toolName}: aspect ${save.aspectName} = "${save.aspectPattern}" for ${save.scope}`,
+                `${verdict === "allow" ? "Allowed" : "Denied"} ${event.toolName}: aspect ${save.aspectName} = "${save.aspectPattern}" in mode '${targetMode}' for ${save.scope}`,
                 "info",
               )
             } else if (save.ruleType === "tool") {
-              await addToolRule(save.scope, ctx.cwd, currentMode, event.toolName, save.entry)
+              await addToolRule(save.scope, ctx.cwd, targetMode, event.toolName, save.entry)
               ctx.ui.notify(
-                `${verdict === "allow" ? "Allowed" : "Denied"} ${event.toolName} (tool rule) for ${save.scope}`,
+                `${verdict === "allow" ? "Allowed" : "Denied"} ${event.toolName} (tool rule) in mode '${targetMode}' for ${save.scope}`,
                 "info",
               )
             }

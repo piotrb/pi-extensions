@@ -55,12 +55,62 @@ describe("loadConfig", () => {
   it("applies STOCK_CONFIG when neither file exists", async () => {
     const { config } = await loadConfig(tmpCwd)
     // Stock modes are present.
+    expect(config.modes).toHaveProperty("readonly")
     expect(config.modes).toHaveProperty("default")
-    expect(config.modes).toHaveProperty("plan")
     expect(config.modes).toHaveProperty("edit")
+    expect(config.modes).toHaveProperty("plan")
     // Stock toolMetadata for the 7 built-in tools is present.
     expect(config.toolMetadata).toHaveProperty("read")
     expect(config.toolMetadata).toHaveProperty("bash")
+  })
+
+  it("resolves the stock inheritance chain: default extends readonly, edit extends default, plan extends readonly", async () => {
+    // The pre-resolve `extends` field is stripped from the resolved
+    // modes (per `resolveExtends`). So we test the AFTER state: the
+    // deep-merge should have applied the parent rules to the children.
+    const { config } = await loadConfig(tmpCwd)
+    // `default` inherits readonly's permissive base + adds its own asks.
+    expect(config.modes.default?.tagRules).toMatchObject({
+      readonly: "allow", // inherited from readonly
+      metadata: "allow", // inherited from readonly
+      mutating: "ask", // default's own
+      execution: "ask", // default's own
+      network: "ask", // default's own
+    })
+    // `edit` inherits everything from default and adds mutating: allow.
+    expect(config.modes.edit?.tagRules).toMatchObject({
+      readonly: "allow", // from readonly (via default)
+      metadata: "allow", // from readonly (via default)
+      mutating: "allow", // edit's own override
+      execution: "ask", // from default
+      network: "ask", // from default
+    })
+    // `plan` extends readonly directly (skipping default). The mutating/
+    // execution/network asks from default are NOT inherited.
+    expect(config.modes.plan?.tagRules).toMatchObject({
+      readonly: "allow", // from readonly
+      metadata: "allow", // from readonly
+      mutating: { verdict: "deny" }, // plan's own override
+      execution: { verdict: "deny" }, // plan's own override
+      network: { verdict: "deny" }, // plan's own override
+    })
+    // Plan's defaultDecision is deny, not the ask inherited from readonly.
+    expect(config.modes.plan?.defaultDecision).toEqual({
+      verdict: "deny",
+      reason: "plan mode denies all by default",
+    })
+    // The `extends` field is stripped from the resolved modes.
+    expect(config.modes.default?.extends).toBeUndefined()
+    expect(config.modes.edit?.extends).toBeUndefined()
+    expect(config.modes.plan?.extends).toBeUndefined()
+  })
+
+  it("orders stock modes as readonly, default, edit, plan in modeOrder", async () => {
+    const { config } = await loadConfig(tmpCwd)
+    // The stock order is the most-permissive mode first, narrowing
+    // toward plan mode (the most restrictive). YOLO is appended
+    // automatically; we test the prefix.
+    expect(config.modeOrder.slice(0, 4)).toEqual(["readonly", "default", "edit", "plan"])
   })
 
   it("is idempotent (two consecutive calls return equivalent results)", async () => {

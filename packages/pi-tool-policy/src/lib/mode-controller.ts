@@ -73,4 +73,59 @@ export class ModeController {
       : mode.additionalInstructions.text
     return `\n\n[Tool policy mode: ${this._currentMode}]\n${text}\n[/Tool policy mode]`
   }
+
+  /**
+   * The inheritance chain for the active mode, ordered from the mode
+   * itself down to the root (the mode with no `extends`).
+   *
+   * Example: if `edit` extends `default` and `default` extends
+   * `readonly`, returns `["edit", "default", "readonly"]`. For a
+   * standalone mode (no `extends`), returns just `[modeName]`.
+   *
+   * The chain drives the target-mode picker in the save-rule modal:
+   * the user can choose to write a new rule into any mode in the
+   * chain. Writing to a parent mode makes the rule apply to every
+   * mode that inherits from it.
+   *
+   * Cycles are short-circuited to the first repetition, so a malformed
+   * config (e.g. `a extends b` and `b extends a`) won't infinite-loop.
+   * The chain is whatever the config says, in declaration order.
+   *
+   * Reads from the *raw* (pre-resolve) config so the `extends` field
+   * is still present on the mode blocks. The loader's
+   * `resolveExtends` strips `extends` from the resolved modes, so
+   * calling this on a post-resolve config would always return a
+   * 1-element chain.
+   */
+  getExtendsChain(rawConfig: Config): string[] {
+    return computeExtendsChain(rawConfig, this._currentMode)
+  }
+}
+
+/**
+ * Pure helper. Walks the `extends` graph from `modeName` and returns
+ * the chain in declaration order (the mode itself, then its parents
+ * in the order they appear in `extends`).
+ *
+ * Exported for tests and for callers that have a raw config but no
+ * ModeController (e.g. the save-rule modal computing the picker list
+ * for a non-current mode).
+ */
+export function computeExtendsChain(rawConfig: Config, modeName: string): string[] {
+  const chain: string[] = []
+  const seen = new Set<string>()
+  let current: string | undefined = modeName
+  while (current && !seen.has(current)) {
+    if (!(current in rawConfig.modes)) {
+      // Unknown mode in the chain — stop here. The loader emits a
+      // warning for this; the chain returns whatever we collected
+      // before the unknown link.
+      break
+    }
+    seen.add(current)
+    chain.push(current)
+    const parents: string[] | undefined = rawConfig.modes[current]?.extends
+    current = parents?.[0]
+  }
+  return chain
 }

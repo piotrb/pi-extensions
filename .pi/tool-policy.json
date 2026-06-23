@@ -1,0 +1,43 @@
+{
+  "modes": {
+    "readonly": {
+      "aspectRules": {
+        "bash_cmd": {
+          "patterns": {
+            "ls *": "allow",
+            "grep *": "allow",
+            "find *": "allow"
+          }
+        }
+      },
+      "toolRules": {
+        "context_tag": [
+          {
+            "verdict": "allow"
+          }
+        ],
+        "ask_user_question": [
+          {
+            "verdict": "allow"
+          }
+        ],
+        "todo": [
+          {
+            "verdict": "allow"
+          }
+        ]
+      }
+    },
+    "default": {
+      "aspectRules": {
+        "bash_cmd": {
+          "patterns": {
+            "pnpm *": "allow"
+          }
+        }
+      }
+    },
+    "edit": {
+    }
+  }
+}

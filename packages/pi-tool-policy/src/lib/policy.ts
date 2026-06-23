@@ -43,14 +43,64 @@ export function coerceForMatch(value: unknown): string | undefined {
 }
 
 /**
+ * Layer priority. Lower index = more specific = wins ties among layers.
+ * The default layer is least specific. The order is fixed; aspect > tool
+ * > tag > default reflects the design intent: an explicit per-pattern
+ * aspect rule (`bash_cmd "ls *" = allow`) should beat a broad tag rule
+ * (`tag:execution = ask`), because the aspect rule encodes a more
+ * specific user intent. See the per-layer combine in `evaluate()`.
+ */
+const LAYER_PRIORITY: readonly RuleResult["layer"][] = ["aspect", "tool", "tag", "default"] as const
+
+/**
  * Evaluate a single tool_call event against the active mode's rules.
  *
- * Single-pass fold: tagRules + aspectRules + toolRules contribute verdicts;
- * defaultDecision is the fall-through. Most-restrictive wins. The rule trail
- * captures applied/suppressed/noop for the UI:
- *   - applied: rule's verdict was the running winner at the time it was added
- *   - suppressed: rule's verdict was less restrictive than the running winner
- *   - noop: rule's verdict matched the running winner at the time it was added
+ * **Per-layer most-specific-wins combine.** The matcher first collects
+ * rules into four layer buckets (aspect / tool / tag / default), then
+ * picks the global winner from the layer winners in priority order
+ * (aspect > tool > tag > default). `deny` is sticky across layers: if
+ * ANY layer produces `deny`, the global verdict is `deny`.
+ *
+ * Why not the old "flat most-restrictive wins" combine? An aspect rule
+ * like `bash_cmd "ls *" = allow` is a more specific user intent than
+ * `tag:execution = ask`, and the user reasonably expects the explicit
+ * per-pattern allow to win. Under the old flat combine, the tag's
+ * blanket `ask` would suppress the aspect's `allow` because `ask` is
+ * more restrictive at the per-rule level — even though the user wrote
+ * the aspect rule specifically to override the tag.
+ *
+ * The two-direction property (the one that makes this rule correct and
+ * is easy to "fix" by accident in a future refactor):
+ *
+ *   - more-specific `allow` beats less-specific `ask`
+ *     (the bug-report case: aspect `allow` over tag `ask`).
+ *   - more-specific `ask`  beats less-specific `allow`
+ *     (a deliberate `aspect: ask` for a narrow pattern should
+ *     still ask, even when the tag says `allow`).
+ *
+ * `deny` is sticky to preserve the safety invariant: a `deny` from
+ * ANY layer is the final answer, regardless of layer priority. A
+ * `tag:execution = deny` must not be overridable by an aspect `allow`.
+ *
+ * **Undecided layers defer.** When a layer has no rules (e.g. no
+ * aspect pattern matched the call, no tool rule was defined), the
+ * layer has no opinion and the combine defers to the next-most-
+ * specific layer that DOES have a verdict. The default layer always
+ * has a verdict (it is the baseline), so a call with no matching
+ * rules at all lands on the default.
+ *
+ * The rule trail records each rule's per-rule status:
+ *   - applied:  this rule is the layer winner AND the layer is the
+ *               global winner. At most one rule per call has this
+ *               status.
+ *   - shadowed: this rule's verdict is less restrictive than the
+ *               layer winner (or, if this rule IS the layer winner,
+ *               the layer winner was beaten by a more-specific
+ *               layer — e.g. the tag layer's `ask` is shadowed by
+ *               the aspect layer's `allow`).
+ *   - noop:     this rule's verdict matches the layer winner exactly
+ *               (e.g. two `tag:readonly: ask` rules where the
+ *               second is noop relative to the first).
  */
 export function evaluate(
   event: ToolCallEvent,
@@ -72,19 +122,21 @@ export function evaluate(
   }
 
   const ruleTrail: RuleResult[] = []
-  // No decision yet — the defaultDecision is the *baseline*, not a rule
-  // that always wins. We seed winningVerdict from the default only if
-  // no explicit rule (tagRules / aspectRules / toolRules) fires. This
-  // way `tagRules.readonly: "allow"` properly allows readonly tools
-  // even when `defaultDecision` is `"ask"`, matching the standard
-  // precedence: explicit rules > default.
-  let winningVerdict: Verdict | undefined = undefined
-  const reasonParts: string[] = []
+  // Per-layer accumulators. Each layer collects its rules verbatim;
+  // the per-layer winner and the global winner are decided in a
+  // second pass after all rules are collected. This separation is
+  // what makes "deny sticky" and "more-specific-layer wins" compose
+  // correctly — the matcher's contribution order within a layer
+  // doesn't matter, and a deny from any layer is observable to
+  // every other layer.
+  const layerRules: Record<RuleResult["layer"], RuleResult[]> = {
+    aspect: [],
+    tool: [],
+    tag: [],
+    default: [],
+  }
 
-  /** True after at least one explicit rule (tag/aspect/tool) fired. */
-  let explicitRuleFired = false
-
-  /** Contribute a rule's verdict to the running combine. */
+  /** Contribute a rule's verdict to its layer's bucket. */
   function contribute(
     layer: RuleResult["layer"],
     key: string,
@@ -92,27 +144,17 @@ export function evaluate(
     extras: { aspect?: string; pattern?: string } = {},
   ): void {
     const { verdict, reason } = normalizeVerdict(v)
-    const strictness = STRICTNESS[verdict]
-    const winningStrictness = winningVerdict === undefined ? -1 : STRICTNESS[winningVerdict]
-
-    let status: RuleResult["status"]
-    if (winningVerdict === undefined) {
-      // First rule to fire: always applied.
-      status = "applied"
-      winningVerdict = verdict
-    } else if (strictness > winningStrictness) {
-      status = "applied"
-      winningVerdict = verdict
-    } else if (strictness < winningStrictness) {
-      status = "suppressed"
-    } else {
-      status = "noop" // same value as the running winner
+    const entry: RuleResult = {
+      layer,
+      key,
+      aspect: extras.aspect,
+      pattern: extras.pattern,
+      verdict,
+      reason,
+      status: "noop",
     }
-
-    ruleTrail.push({ layer, key, aspect: extras.aspect, pattern: extras.pattern, verdict, reason, status })
-    if (status === "applied" && reason) {
-      reasonParts.push(reason)
-    }
+    layerRules[layer].push(entry)
+    ruleTrail.push(entry)
   }
 
   // 1. tagRules: for each tag in effectiveTags, look up tagRules[tag]
@@ -120,7 +162,6 @@ export function evaluate(
     const v = mode.tagRules[tag]
     if (v !== undefined) {
       contribute("tag", tag, v)
-      explicitRuleFired = true
     }
   }
 
@@ -143,7 +184,6 @@ export function evaluate(
           const result = matchAspectEach(aspectName, value as string[], aspectRule, ctx.cwd)
           if (result === "undecided") continue
           contribute("aspect", field, result.verdict, { aspect: aspectName, pattern: result.pattern })
-          explicitRuleFired = true
           continue
         }
 
@@ -152,7 +192,6 @@ export function evaluate(
         const result = matchAspect(aspectName, s, aspectRule, ctx.cwd)
         if (result === "undecided") continue
         contribute("aspect", field, result.verdict, { aspect: aspectName, pattern: result.pattern })
-        explicitRuleFired = true
       }
     }
   }
@@ -165,7 +204,6 @@ export function evaluate(
       if (!entry.fields) {
         // No fields clause: always matches.
         contribute("tool", event.toolName, entry.verdict)
-        explicitRuleFired = true
         continue
       }
       let allFieldsMatch = true
@@ -188,28 +226,123 @@ export function evaluate(
       }
       if (allFieldsMatch) {
         contribute("tool", event.toolName, entry.verdict)
-        explicitRuleFired = true
       }
     }
   }
 
-  // 4. defaultDecision: the baseline. Contributed as a rule only if no
-  // explicit rule (tag/aspect/tool) fired, so an explicit `allow` on
-  // tagRules / aspectRules / toolRules is not overridden by the default.
-  if (!explicitRuleFired) {
-    contribute("default", "<default>", mode.defaultDecision)
-  } else {
-    // Record the default in the trail as a "noop" (it didn't apply, but
-    // it's still useful debug context for the user to see what the
-    // baseline would have been).
-    const { verdict, reason } = normalizeVerdict(mode.defaultDecision)
-    ruleTrail.push({
-      layer: "default",
-      key: "<default>",
-      verdict,
-      reason,
-      status: "noop",
-    })
+  // 4. defaultDecision: the baseline. Always contributed as a rule in
+  // its own layer, so the per-layer combine can fall through to it
+  // when no other layer has a verdict. The default's per-rule status
+  // is decided in the second pass below (it's `applied` when no
+  // other layer has rules; otherwise it's `shadowed` or `noop`
+  // relative to the more-specific layer winner).
+  contribute("default", "<default>", mode.defaultDecision)
+
+  // ─── second pass: assign per-rule statuses ──────────────────────────────
+  //
+  // For each layer, the layer winner is the most-restrictive verdict
+  // among the layer's rules (most-restrictive of deny > ask > allow).
+  // A layer with no rules has no winner and the combine defers to the
+  // next-most-specific layer (see "undecided layers defer" in the
+  // function docstring).
+  //
+  // The global winner is the most-specific layer's layer winner,
+  // subject to deny-sticky: if ANY layer produced `deny`, the global
+  // winner is `deny` (the deny-sticky layer is the global winner for
+  // status purposes, even if a more-specific layer had a non-deny
+  // verdict — the safety invariant is "any deny anywhere wins").
+  //
+  // Per-rule status (mutates `entry.status` in place):
+  //   - applied:  this rule is the layer winner AND the layer is the
+  //               global winner.
+  //   - noop:     this rule's verdict matches the layer winner
+  //               exactly.
+  //   - shadowed: this rule's verdict is less restrictive than the
+  //               layer winner, OR the rule IS the layer winner but
+  //               the layer was beaten by a more-specific layer.
+
+  /** The most-restrictive verdict among the rules in a layer. Undefined
+   *  when the layer has no rules. */
+  function layerWinner(layer: RuleResult["layer"]): Verdict | undefined {
+    const rules = layerRules[layer]
+    if (rules.length === 0) return undefined
+    let winner: Verdict = rules[0]!.verdict
+    for (const r of rules) {
+      if (STRICTNESS[r.verdict] > STRICTNESS[winner]) {
+        winner = r.verdict
+      }
+    }
+    return winner
+  }
+
+  const winners: Partial<Record<RuleResult["layer"], Verdict>> = {}
+  for (const layer of LAYER_PRIORITY) {
+    const w = layerWinner(layer)
+    if (w !== undefined) winners[layer] = w
+  }
+
+  // Global winner: deny-sticky first (any layer's `deny` wins), then
+  // most-specific layer's winner. Implementation: we walk layers
+  // from most-specific to least-specific (LAYER_PRIORITY order) and
+  // track two slots:
+  //   - firstSeen: the first layer with any verdict (the "no-deny"
+  //     candidate; will be the global winner IF no layer has a
+  //     deny verdict).
+  //   - mostSpecificDeny: the most-specific layer with a `deny`
+  //     verdict, if any (overrides firstSeen if set).
+  // The global winner is mostSpecificDeny ?? firstSeen. This gives
+  // us: (a) deny-sticky (any layer's deny wins), and (b) the
+  // most-specific layer with that deny is reported.
+  let firstSeen: { layer: RuleResult["layer"]; verdict: Verdict } | undefined
+  let mostSpecificDeny: { layer: RuleResult["layer"]; verdict: Verdict } | undefined
+  for (const layer of LAYER_PRIORITY) {
+    const w = winners[layer]
+    if (w === undefined) continue
+    firstSeen ??= { layer, verdict: w }
+    if (w === "deny") mostSpecificDeny ??= { layer, verdict: w }
+  }
+
+  // The combine always has a winner — at minimum the default layer
+  // is always populated, so firstSeen is always set. The assertion
+  // is a type guard for the rest of the function.
+  const globalWinner = mostSpecificDeny ?? firstSeen
+  if (globalWinner === undefined) {
+    // Defensive: should be unreachable because the default layer is
+    // always contributed above. If it ever triggers, fall back to
+    // a sane PolicyDecision.
+    return {
+      action: "ask",
+      reason: "Policy evaluation produced no verdict (internal error)",
+      ruleTrail,
+      effectiveTags,
+      directoryGuardrailFired: false,
+    }
+  }
+
+  // Assign per-rule statuses. Walk the layers in priority order so
+  // we can determine "is this layer the global winner?" without
+  // re-checking.
+  for (const layer of LAYER_PRIORITY) {
+    const rules = layerRules[layer]
+    if (rules.length === 0) continue
+    const layerVerdict = winners[layer]!
+    const isGlobalWinnerLayer = layer === globalWinner.layer
+    // Find the first rule in the layer with the layer winner's
+    // verdict; that's the rule that gets `applied` (if the layer
+    // is the global winner). Subsequent rules with the same verdict
+    // are `noop`; rules with a less-restrictive verdict are
+    // `shadowed`.
+    let winnerAssigned = false
+    for (const r of rules) {
+      if (r.verdict === layerVerdict && !winnerAssigned) {
+        r.status = isGlobalWinnerLayer ? "applied" : "shadowed"
+        winnerAssigned = true
+      } else if (r.verdict === layerVerdict) {
+        r.status = "noop"
+      } else {
+        r.status = "shadowed"
+      }
+    }
   }
 
   // Format the final reason. The framing depends on the verdict:
@@ -220,21 +353,24 @@ export function evaluate(
   //   - "ask"   → "Permission requested: ..." (a rule fired; the user
   //               will see an interactive modal — this reason is what the
   //               modal displays as context, not a rejection message).
-  const normalizedDefault: Verdict =
-    typeof mode.defaultDecision === "string" ? mode.defaultDecision : mode.defaultDecision.verdict
-  // When no explicit rule fired, the default wins. When an explicit rule
-  // fired, `winningVerdict` is guaranteed to be set (any `contribute()` call
-  // assigns it). The explicit `if/else` keeps the type flow obvious without
-  // the `as unknown as Verdict` double cast.
-  const finalVerdict: Verdict = explicitRuleFired ? winningVerdict! : normalizedDefault
+  const finalVerdict: Verdict = globalWinner.verdict
+  const appliedRules = ruleTrail.filter((r) => r.status === "applied")
+  const reasonParts = appliedRules.map((r) => r.reason ?? "").filter((r) => r.length > 0)
   const reason =
     finalVerdict === "deny"
       ? buildDenyReason({
           toolName: event.toolName,
           modeName: currentModeName,
-          appliedRules: ruleTrail.filter((r) => r.status === "applied"),
+          appliedRules,
           reasonParts,
-          explicitRuleFired,
+          // The new model considers a default-only deny (no other
+          // layer's rules) to still be an "explicit rule fired" from
+          // the deny-reason formatter's perspective — the default
+          // rule is a real rule with a real verdict. The "no rule
+          // matched" middle block now only triggers when the default
+          // itself has no verdict, which is impossible by
+          // construction. Kept as `applied.length > 0` for safety.
+          explicitRuleFired: appliedRules.length > 0,
         })
       : formatAskReason(ruleTrail)
 

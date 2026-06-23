@@ -178,8 +178,30 @@ export interface ResolvedToolMetadata {
   fields: Record<string, AspectDeclaration>
 }
 
-/** Status of a single rule in the per-mode matcher trail. */
-export type RuleStatus = "applied" | "suppressed" | "noop"
+/**
+ * Status of a single rule in the per-mode matcher trail.
+ *
+ * Per-layer combine (see `src/lib/policy.ts`): the matcher first
+ * computes the most-restrictive verdict within each layer
+ * (aspect / tool / tag / default), then picks the most-specific
+ * layer's verdict as the global winner. `deny` is sticky — if any
+ * layer produces `deny`, the global verdict is `deny`.
+ *
+ * - `applied` — this rule's verdict is the layer winner AND the
+ *   layer's verdict is the global winner. At most one rule per
+ *   call has this status.
+ * - `shadowed` — this rule's verdict was less restrictive than
+ *   the layer winner (e.g. a `tag:execution: allow` shadowed by
+ *   a `tag:execution: ask` from the same layer, or a `tag:execution:
+ *   ask` shadowed by a more-specific `aspect: allow` from the
+ *   aspect layer). The user sees this in the trail as debug
+ *   context, not as a contributing rule.
+ * - `noop` — this rule's verdict matched the layer winner exactly
+ *   (e.g. two `tag:readonly: ask` rules where the second is noop
+ *   relative to the first). The verdict is recorded for
+ *   completeness; it does not change the winner.
+ */
+export type RuleStatus = "applied" | "shadowed" | "noop"
 
 /** One rule's contribution to the per-mode fold. */
 export interface RuleResult {
@@ -195,7 +217,14 @@ export interface RuleResult {
   verdict: Verdict
   /** Optional reason carried by the rule. */
   reason?: string
-  /** applied = winner (or contributed to the winner), suppressed = less restrictive, noop = same value. */
+  /**
+   * applied = this rule's verdict is the layer winner AND the layer's
+   * verdict is the global winner. shadowed = less restrictive than the
+   * layer winner (a different rule in the same layer is more
+   * restrictive, or a more-specific layer produced a verdict that
+   * beats this one). noop = same value as the layer winner (recorded
+   * for completeness; does not change the winner).
+   */
   status: RuleStatus
 }
 

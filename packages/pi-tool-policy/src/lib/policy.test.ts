@@ -215,7 +215,7 @@ describe("evaluate", () => {
       expect(decision.action).toBe("deny")
     })
 
-    it("the defaultDecision status is 'noop' if the runner already matches", () => {
+    it("the defaultDecision status is 'shadowed' when a more-specific layer wins", () => {
       const decision = runInMode(
         "read",
         { path: "/repo/foo.ts" },
@@ -228,9 +228,14 @@ describe("evaluate", () => {
         },
         ["readonly"],
       )
-      // The tag rule already produced "ask" (the same as defaultDecision).
+      // The tag rule produced "ask"; the default also says "ask" but
+      // the tag layer is more specific than the default layer, so
+      // the tag layer wins. The default's status is therefore
+      // `shadowed` (its layer was beaten by a more-specific layer),
+      // NOT `noop` (which is reserved for "same verdict as the
+      // layer winner within the same layer").
       const defaultRule = decision.ruleTrail.find((r) => r.layer === "default")
-      expect(defaultRule?.status).toBe("noop")
+      expect(defaultRule?.status).toBe("shadowed")
     })
 
     it("the defaultDecision status is 'applied' when no rules fired", () => {
@@ -251,7 +256,7 @@ describe("evaluate", () => {
   })
 
   describe("status trail", () => {
-    it("'applied' status is the most-restrictive winner", () => {
+    it("'applied' status is the most-restrictive rule in the winning layer; the loser in the same layer is 'shadowed'", () => {
       const decision = runInMode(
         "write",
         { path: "/repo/foo.ts" },
@@ -265,15 +270,15 @@ describe("evaluate", () => {
         ["readonly", "mutating"],
       )
       expect(decision.action).toBe("deny")
-      const denyRule = decision.ruleTrail.find((r) => r.verdict === "deny")
+      // Per-layer combine: both rules are in the tag layer. The
+      // layer's most-restrictive winner is `deny` (mutating). The
+      // mutating rule is `applied`; the readonly rule is `shadowed`
+      // (less restrictive than the layer winner). Exactly one rule
+      // per call is `applied` — the global winner.
+      const denyRule = decision.ruleTrail.find((r) => r.layer === "tag" && r.key === "mutating")
       expect(denyRule?.status).toBe("applied")
-      // The "readonly" tag rule fired first and set the running decision
-      // to "allow" (status: "applied"). When the "mutating" deny rule
-      // fired, it was strictly more restrictive, so it took over (also
-      // "applied"). Both rules' statuses are "applied" because each was
-      // the running winner at the time it contributed.
       const allowRule = decision.ruleTrail.find((r) => r.layer === "tag" && r.key === "readonly")
-      expect(allowRule?.status).toBe("applied")
+      expect(allowRule?.status).toBe("shadowed")
     })
 
     it("'noop' status when the rule's verdict matches the running decision", () => {
@@ -293,6 +298,186 @@ describe("evaluate", () => {
       const readonlyRule = decision.ruleTrail.find((r) => r.layer === "tag" && r.key === "readonly")
       const metadataRule = decision.ruleTrail.find((r) => r.layer === "tag" && r.key === "metadata")
       // Order in ruleTrail: readonly (applied) then metadata (noop).
+      expect(readonlyRule?.status).toBe("applied")
+      expect(metadataRule?.status).toBe("noop")
+    })
+  })
+
+  describe("per-layer combine (most-specific layer wins; deny is sticky)", () => {
+    it("REGRESSION: aspect 'allow' beats tag 'ask' (the bug-report case)", () => {
+      // From the bug report: a `bash` call with command `["ls", "*"]`
+      // and effective tag `execution`. The user wrote an aspect rule
+      // `bash_cmd "ls *" = allow` to allow `ls` calls without
+      // prompting. The tag rule `tag:execution = ask` is a blanket
+      // ask for everything tagged execution. Under the old
+      // flat-most-restrictive combine, the tag's `ask` won. Under
+      // the new per-layer combine, the more-specific aspect layer
+      // wins, so the call is allowed.
+      const bash: AspectRule = { mode: "bash", patterns: { "ls *": "allow" } }
+      const decision = runInMode(
+        "bash",
+        { command: ["ls", "*"] },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { execution: "ask" },
+          toolRules: {},
+          aspectRules: { bash_cmd: bash },
+        },
+        ["execution"],
+        new Map([["bash", { tags: ["execution"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }]]),
+      )
+      expect(decision.action).toBe("allow")
+      const aspectRule = decision.ruleTrail.find((r) => r.layer === "aspect")
+      const tagRule = decision.ruleTrail.find((r) => r.layer === "tag")
+      expect(aspectRule?.status).toBe("applied")
+      expect(tagRule?.status).toBe("shadowed")
+    })
+
+    it("more-specific 'ask' beats less-specific 'allow' (the other direction)", () => {
+      // A user deliberately wrote an aspect rule that ASKS for a
+      // narrow pattern. The tag rule allows broadly. The more-
+      // specific aspect `ask` should still apply — the user wrote
+      // the rule specifically to ask about this pattern. This is
+      // the two-direction property of the combine.
+      const path: AspectRule = { patterns: { "*.env": "ask" } }
+      const decision = runInMode(
+        "read",
+        { path: "/repo/.env" },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { readonly: "allow" },
+          toolRules: {},
+          aspectRules: { path },
+        },
+        ["readonly"],
+        new Map([["read", pathTool("read")]]),
+      )
+      expect(decision.action).toBe("ask")
+      const aspectRule = decision.ruleTrail.find((r) => r.layer === "aspect")
+      const tagRule = decision.ruleTrail.find((r) => r.layer === "tag")
+      expect(aspectRule?.status).toBe("applied")
+      expect(tagRule?.status).toBe("shadowed")
+    })
+
+    it("REGRESSION: deny at any layer beats all other rules regardless of specificity", () => {
+      // Safety invariant: a `deny` from ANY layer is the final
+      // answer, regardless of layer priority. A more-specific
+      // aspect `allow` must NOT override a tag `deny`. This is
+      // what `deny`-sticky means.
+      const path: AspectRule = { patterns: { "**": "allow" } }
+      const decision = runInMode(
+        "read",
+        { path: "/repo/foo.ts" },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { readonly: "deny" },
+          toolRules: {},
+          aspectRules: { path },
+        },
+        ["readonly"],
+        new Map([["read", pathTool("read")]]),
+      )
+      expect(decision.action).toBe("deny")
+      const tagRule = decision.ruleTrail.find((r) => r.layer === "tag")
+      const aspectRule = decision.ruleTrail.find((r) => r.layer === "aspect")
+      expect(tagRule?.status).toBe("applied")
+      expect(aspectRule?.status).toBe("shadowed")
+    })
+
+    it("undecided aspect layer defers to the next-most-specific layer (tag wins)", () => {
+      // No aspect pattern matches the call (the `*.env` aspect
+      // pattern does not match `/repo/foo.ts`). The aspect layer
+      // therefore has no opinion and the combine defers to the
+      // tag layer, which says `ask`. The default is shadowed.
+      const path: AspectRule = { patterns: { "*.env": "deny" } }
+      const decision = runInMode(
+        "read",
+        { path: "/repo/foo.ts" },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { readonly: "ask" },
+          toolRules: {},
+          aspectRules: { path },
+        },
+        ["readonly"],
+        new Map([["read", pathTool("read")]]),
+      )
+      expect(decision.action).toBe("ask")
+      const tagRule = decision.ruleTrail.find((r) => r.layer === "tag")
+      const defaultRule = decision.ruleTrail.find((r) => r.layer === "default")
+      // No aspect rule in the trail (the matcher returns `undecided`
+      // and doesn't contribute).
+      expect(decision.ruleTrail.find((r) => r.layer === "aspect")).toBeUndefined()
+      expect(tagRule?.status).toBe("applied")
+      expect(defaultRule?.status).toBe("shadowed")
+    })
+
+    it("tool layer beats tag layer when both have matching rules", () => {
+      // Tool rule is more specific than tag rule. The tool rule's
+      // verdict wins regardless of which is more restrictive.
+      const decision = runInMode(
+        "bash",
+        { command: ["echo", "hi"] },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { execution: "ask" },
+          toolRules: { bash: [{ fields: { command: ["echo *"] }, verdict: "allow" }] },
+          aspectRules: {},
+        },
+        ["execution"],
+      )
+      expect(decision.action).toBe("allow")
+      const toolRule = decision.ruleTrail.find((r) => r.layer === "tool")
+      const tagRule = decision.ruleTrail.find((r) => r.layer === "tag")
+      expect(toolRule?.status).toBe("applied")
+      expect(tagRule?.status).toBe("shadowed")
+    })
+
+    it("two denies across layers: the most-specific layer's deny is the global winner", () => {
+      // Both the tag and the tool layer have `deny`. The more-
+      // specific (tool) layer's `deny` is the global winner.
+      const decision = runInMode(
+        "bash",
+        { command: ["echo", "hi"] },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { execution: "deny" },
+          toolRules: { bash: [{ verdict: "deny" }] },
+          aspectRules: {},
+        },
+        ["execution"],
+      )
+      expect(decision.action).toBe("deny")
+      const toolRule = decision.ruleTrail.find((r) => r.layer === "tool")
+      const tagRule = decision.ruleTrail.find((r) => r.layer === "tag")
+      expect(toolRule?.status).toBe("applied")
+      expect(tagRule?.status).toBe("shadowed")
+    })
+
+    it("noop means 'same verdict as the layer winner' (not 'same as global winner')", () => {
+      // Two tag rules in the same layer with the same verdict.
+      // The first is the layer winner (and global winner); the
+      // second is noop relative to the layer winner.
+      const decision = runInMode(
+        "read",
+        { path: "/repo/foo.ts" },
+        {
+          description: "test",
+          defaultDecision: "ask",
+          tagRules: { readonly: "ask", metadata: "ask" },
+          toolRules: {},
+          aspectRules: {},
+        },
+        ["readonly", "metadata"],
+      )
+      const readonlyRule = decision.ruleTrail.find((r) => r.layer === "tag" && r.key === "readonly")
+      const metadataRule = decision.ruleTrail.find((r) => r.layer === "tag" && r.key === "metadata")
       expect(readonlyRule?.status).toBe("applied")
       expect(metadataRule?.status).toBe("noop")
     })

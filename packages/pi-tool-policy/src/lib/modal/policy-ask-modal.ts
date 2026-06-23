@@ -47,6 +47,24 @@ export interface PolicyAskArgs {
    * baseline is included as a noop entry when other rules fired.
    */
   ruleTrail?: readonly RuleResult[]
+  /**
+   * The inheritance chain for the active mode, ordered from the mode
+   * itself down to the root. Drives the target-mode picker in the
+   * save-rule submenu: the user can pick any mode in the chain to
+   * write the new rule into (e.g. in `edit` mode, the user can save
+   * into `edit`, `default`, or `readonly` because `edit` extends
+   * `default` which extends `readonly`).
+   *
+   * The chain must be computed against the *raw* (pre-resolve) config
+   * so the `extends` field is still present on the mode blocks — the
+   * loader's `resolveExtends` strips it from the resolved modes.
+   *
+   * When the chain has length 1 (the current mode has no parents), the
+   * target-mode picker is skipped entirely; the writer is invoked
+   * with the current mode as the target. When the chain has length
+   * 2+, the picker is shown after the scope submenu.
+   */
+  extendsChain?: readonly string[]
 }
 
 /** The persistence scope for a saved rule. */
@@ -62,12 +80,21 @@ export type PolicyAskRuleType = "aspect" | "tool"
 export interface PolicyAskResult {
   decision: PolicyAskDecision
   /**
-   * For `allow_save` and `deny_save` only: the scope, rule type, and the
-   * rule entry to persist. The caller is responsible for routing this
-   * to the right writer (aspect vs tool).
+   * For `allow_save` and `deny_save` only: the scope, rule type, target
+   * mode, and the rule entry to persist. The caller is responsible for
+   * routing this to the right writer (aspect vs tool) and writing into
+   * the named target mode (which may be a parent of the current mode).
    */
   save?: {
     scope: PolicyAskScope
+    /**
+     * The mode the rule should be written into. Defaults to the
+     * current mode (the writer picks this when the picker was
+     * skipped because the chain has length 1). For a user who
+     * picked a parent from the inheritance chain, this is the
+     * chosen parent's name.
+     */
+    targetMode: string
     ruleType: PolicyAskRuleType
     /** The aspect name (for `aspect` ruleType) — needed by the writer. */
     aspectName?: string
@@ -97,6 +124,41 @@ const SCOPE_LABELS: readonly { value: PolicyAskScope; label: string }[] = [
   { value: "project", label: "Save for this project (writes to <cwd>/.pi/tool-policy.json)" },
   { value: "user", label: "Save for this user (writes to ~/.pi/tool-policy.json)" },
 ] as const
+
+/**
+ * Build the target-mode picker labels for a given inheritance chain.
+ * One row per mode in the chain, most-specific first. Each row's
+ * label clarifies what the mode is FOR (current mode, parent, or
+ * root base) so the user can pick the right one without having to
+ * know the mode structure.
+ *
+ * `chain` is the `extends` chain from the raw config (computed by
+ * `computeExtendsChain`); it's always ordered from most-specific to
+ * root, so the first entry is the current mode and the last entry
+ * is the root.
+ *
+ * Exported for data-shaping tests.
+ */
+export function buildTargetModeLabels(chain: readonly string[]): string[] {
+  if (chain.length === 0) return []
+  return chain.map((modeName) => {
+    if (modeName === chain[0]) {
+      // First entry is always the current mode (the chain is
+      // ordered from most-specific to root). The current mode
+      // is the default for users who want a mode-specific rule.
+      return `${modeName} (current mode — applies only here)`
+    }
+    if (modeName === chain[chain.length - 1]) {
+      // Last entry is the root (no `extends`). Writing here makes
+      // the rule apply to every mode that inherits from it.
+      return `${modeName} (root — applies to this and every mode that inherits)`
+    }
+    // Middle entries: a parent in the chain. Writing here makes
+    // the rule apply to this mode and every mode that inherits
+    // from it (i.e. the rest of the chain after this entry).
+    return `${modeName} (parent — applies to this and modes that inherit from it)`
+  })
+}
 
 /**
  * One row in the rule-type submenu. For multi-aspect tools there can
@@ -213,7 +275,7 @@ function computeAspectPrefill(
  *  multi-line title renders correctly in the selector. */
 function statusIcon(status: RuleResult["status"]): string {
   if (status === "applied") return "[applied]"
-  if (status === "suppressed") return "[suppressed]"
+  if (status === "shadowed") return "[shadowed]"
   return "[noop]"
 }
 
@@ -233,6 +295,71 @@ function renderRuleLine(rule: RuleResult): string {
   return parts.join(" ")
 }
 
+/**
+ * Layer priority for display. Lower index = more specific = closer to
+ * the top of the rendered trail. Must match the matcher's
+ * `LAYER_PRIORITY` in `src/lib/policy.ts` — if they ever diverge,
+ * the displayed order will no longer reflect the actual decision
+ * stack.
+ */
+const LAYER_DISPLAY_PRIORITY: readonly RuleResult["layer"][] = ["aspect", "tool", "tag", "default"] as const
+
+/**
+ * Sort priority for a rule's status in display. `applied` is the
+ * winner; the rest are equally uninteresting relative to each other
+ * (they're debug context, not contributing rules). Within non-applied
+ * rules, layer priority decides the group order.
+ */
+const STATUS_DISPLAY_PRIORITY: Record<RuleResult["status"], number> = {
+  applied: 0,
+  shadowed: 1,
+  noop: 1,
+}
+
+/**
+ * Sort the matcher trail top-down by priority for display.
+ *
+ * The matcher emits the trail in evaluation order (tag → aspect →
+ * tool → default). That's a useful ordering for the matcher itself
+ * but it's confusing as a user-facing summary: the rule the user
+ * needs to look at first (the winner) is buried somewhere in the
+ * middle.
+ *
+ * The display order is:
+ *   1. The `applied` rule (the global winner) at the top.
+ *   2. All other rules, grouped by layer priority
+ *      (aspect → tool → tag → default), evaluation order preserved
+ *      within each group.
+ *
+ * Stable sort: `Array.prototype.sort` is stable in V8/Node since v12
+ * (ES2019), so a sort key of (statusPriority, layerPriority) on an
+ * array already in evaluation order preserves within-group order
+ * without needing an explicit original-index tiebreaker.
+ *
+ * Returns a new array; the input is not mutated.
+ *
+ * Exported for unit tests.
+ */
+export function sortTrailForDisplay(trail: readonly RuleResult[]): RuleResult[] {
+  const indexed = trail.map((rule, i) => ({
+    rule,
+    // Tiebreaker: original evaluation-order index. Only consulted when
+    // status and layer priority are equal (i.e. two rules in the same
+    // layer with the same status). Belt-and-braces — Array.sort's
+    // stability is the real guarantee, this just makes the intent
+    // explicit.
+    i,
+  }))
+  indexed.sort((a, b) => {
+    const ds = STATUS_DISPLAY_PRIORITY[a.rule.status] - STATUS_DISPLAY_PRIORITY[b.rule.status]
+    if (ds !== 0) return ds
+    const dl = LAYER_DISPLAY_PRIORITY.indexOf(a.rule.layer) - LAYER_DISPLAY_PRIORITY.indexOf(b.rule.layer)
+    if (dl !== 0) return dl
+    return a.i - b.i
+  })
+  return indexed.map((x) => x.rule)
+}
+
 export function buildPolicyAskTitle(args: PolicyAskArgs): string {
   const lines: string[] = []
   lines.push(`Allow tool call: ${args.toolName}?`)
@@ -244,11 +371,13 @@ export function buildPolicyAskTitle(args: PolicyAskArgs): string {
   lines.push(`Mode: ${args.currentMode} · Tags: ${tagPart}`)
   // Rule trail block — one line per rule. Helps the user understand
   // which rule triggered the ask (and why no rule allowed it). Skipped
-  // when the matcher didn't expose a trail (legacy callers).
+  // when the matcher didn't expose a trail (legacy callers). Sorted
+  // top-down by priority (applied first, then by layer specificity)
+  // so the most-relevant rule is the first thing the user reads.
   if (args.ruleTrail && args.ruleTrail.length > 0) {
     lines.push("")
     lines.push("Rules that fired:")
-    for (const rule of args.ruleTrail) {
+    for (const rule of sortTrailForDisplay(args.ruleTrail)) {
       lines.push(`  ${renderRuleLine(rule)}`)
     }
   }
@@ -391,6 +520,44 @@ async function pickScope(
 }
 
 /**
+ * Show the target-mode picker. Returns:
+ *   - `{ kind: "mode", modeName }` on pick (the mode the rule should
+ *     be written into)
+ *   - `{ kind: "skip" }` when the picker should be bypassed
+ *     entirely (chain length 1 — the current mode is the only
+ *     choice, so the writer uses it directly)
+ *   - `MenuActionBack` on Esc (user wants to go back to the
+ *     scope submenu)
+ *
+ * The picker is shown ONLY when the current mode's inheritance
+ * chain has 2+ modes (the current mode has at least one parent).
+ * For a standalone mode there's no choice to make, so we skip
+ * the step and the writer receives the current mode as the
+ * target.
+ */
+async function pickTargetMode(
+  ctx: ExtensionContext,
+  args: PolicyAskArgs,
+  promptPrefix: "Save" | "Deny & Save",
+): Promise<{ kind: "mode"; modeName: string } | { kind: "skip" } | MenuActionBack | MenuActionCancel> {
+  const chain = args.extendsChain
+  if (!chain || chain.length <= 1) {
+    return { kind: "skip" }
+  }
+  const labels = buildTargetModeLabels(chain)
+  const chosen = await ctx.ui.select(
+    `${promptPrefix} in which mode?\n\nTool: ${args.toolName}\nPick the mode whose block should hold the new rule.`,
+    labels,
+  )
+  if (chosen === undefined) return { kind: "back" }
+  const idx = labels.indexOf(chosen)
+  if (idx < 0) return { kind: "back" }
+  const modeName = chain[idx]
+  if (!modeName) return { kind: "back" }
+  return { kind: "mode", modeName }
+}
+
+/**
  * Options for `pickRuleType`. The two save flows differ in
  * (a) whether the rule-type submenu is filtered by coverage (only
  * allow-save does this — a deny rule is always additive because
@@ -415,6 +582,14 @@ interface PickRuleTypeOptions {
   toolName: string
   /** The scope to show in the prompt title. */
   scope: PolicyAskScope
+  /**
+   * The mode the rule will be written into. Shown in the prompt
+   * title so the user has a final confirmation of where the rule
+   * is going. Defaults to the current mode when the picker was
+   * skipped (chain length 1); set explicitly when the user picked
+   * a parent.
+   */
+  targetMode: string
 }
 
 /**
@@ -508,7 +683,7 @@ async function pickRuleType(
     }
     const ruleTypeLabels = rows.map((r) => r.label)
     const ruleChosen = await ctx.ui.select(
-      `${opts.promptPrefix}\n\nTool: ${opts.toolName}\nScope: ${opts.scope}`,
+      `${opts.promptPrefix}\n\nTool: ${opts.toolName}\nScope: ${opts.scope}\nMode: ${opts.targetMode}`,
       ruleTypeLabels,
     )
     // Dispatch through the pure reducer so the edge cases (Esc, missing
@@ -540,6 +715,7 @@ async function pickAspectPattern(
   ctx: ExtensionContext,
   ruleRow: RuleTypeRow,
   scope: PolicyAskScope,
+  targetMode: string,
   decision: "allow_save" | "deny_save",
   verdict: Verdict,
 ): Promise<MenuAction> {
@@ -555,6 +731,7 @@ async function pickAspectPattern(
       decision,
       save: {
         scope,
+        targetMode,
         ruleType: "aspect",
         aspectName: ruleRow.aspectName,
         aspectPattern: pattern,
@@ -622,6 +799,14 @@ async function runSaveFlow(ctx: ExtensionContext, args: PolicyAskArgs, coverage:
   if (scopeResult.kind !== "scope") return scopeResult
   const scope = scopeResult.scope
 
+  // Target-mode picker. Skipped when the chain has length 1 (no
+  // parents to choose from). Esc here goes back to the scope
+  // submenu so the user can change their mind.
+  const modeResult = await pickTargetMode(ctx, args, "Save")
+  if (modeResult.kind === "back") return { kind: "back" }
+  if (modeResult.kind === "cancel") return { kind: "cancel" }
+  const targetMode = modeResult.kind === "mode" ? modeResult.modeName : args.currentMode
+
   while (true) {
     const ruleResult = await pickRuleType(ctx, args, {
       coverage,
@@ -629,12 +814,13 @@ async function runSaveFlow(ctx: ExtensionContext, args: PolicyAskArgs, coverage:
       stripToolSummary: false,
       toolName: args.toolName,
       scope,
+      targetMode,
     })
     if (ruleResult.kind !== "row") return ruleResult
     const ruleRow = ruleResult.row
 
     if (ruleRow.ruleType === "aspect") {
-      const aspectResult = await pickAspectPattern(ctx, ruleRow, scope, "allow_save", "allow")
+      const aspectResult = await pickAspectPattern(ctx, ruleRow, scope, targetMode, "allow_save", "allow")
       if (aspectResult.kind === "back") continue
       return aspectResult
     }
@@ -647,6 +833,7 @@ async function runSaveFlow(ctx: ExtensionContext, args: PolicyAskArgs, coverage:
         decision: "allow_save",
         save: {
           scope,
+          targetMode,
           ruleType: "tool",
           entry: suggested.entry,
         },
@@ -670,6 +857,12 @@ async function runDenySaveFlow(
   if (scopeResult.kind !== "scope") return scopeResult
   const scope = scopeResult.scope
 
+  // Target-mode picker. Same skip / back semantics as runSaveFlow.
+  const modeResult = await pickTargetMode(ctx, args, "Deny & Save")
+  if (modeResult.kind === "back") return { kind: "back" }
+  if (modeResult.kind === "cancel") return { kind: "cancel" }
+  const targetMode = modeResult.kind === "mode" ? modeResult.modeName : args.currentMode
+
   while (true) {
     const ruleResult = await pickRuleType(ctx, args, {
       coverage,
@@ -677,12 +870,13 @@ async function runDenySaveFlow(
       stripToolSummary: true,
       toolName: args.toolName,
       scope,
+      targetMode,
     })
     if (ruleResult.kind !== "row") return ruleResult
     const ruleRow = ruleResult.row
 
     if (ruleRow.ruleType === "aspect") {
-      const aspectResult = await pickAspectPattern(ctx, ruleRow, scope, "deny_save", "deny")
+      const aspectResult = await pickAspectPattern(ctx, ruleRow, scope, targetMode, "deny_save", "deny")
       if (aspectResult.kind === "back") continue
       if (aspectResult.kind === "cancel") return aspectResult
       if (aspectResult.kind === "row") return aspectResult // defensive: pickAspectPattern never returns row
@@ -696,6 +890,7 @@ async function runDenySaveFlow(
     // tool rule — broad deny (no fields clause; matches every call).
     const save: NonNullable<PolicyAskResult["save"]> = {
       scope,
+      targetMode,
       ruleType: "tool",
       entry: { verdict: "deny" },
     }

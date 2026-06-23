@@ -13,8 +13,29 @@ const USER_PATH = () => join(homedir(), ".pi", "tool-policy.json")
  * The stock config shipped with the extension. Used as the base layer when
  * neither the project nor the user config files exist.
  *
- * Stock modes: `default` (permissive baseline), `plan` (read-only),
- * `edit` (mutating allowed). User can define more in their config.
+ * Stock modes form a chain of inheritance, narrowest first:
+ *
+ *   `readonly` — permissive base. Allows the `readonly` and `metadata`
+ *                tags, asks for everything else. A new `readonly` mode
+ *                that this config introduces; users who want a stricter
+ *                read-only mode can drop in a different one.
+ *   `default`  — extends `readonly`. Adds the `mutating`, `execution`,
+ *                and `network` `ask` overrides. The everyday mode.
+ *   `edit`     — extends `default`. Adds the `mutating: allow` override
+ *                so file writes/edits go through without prompting. Still
+ *                asks for `execution` and `network` because those can
+ *                have side effects beyond a single file.
+ *   `plan`     — extends `readonly` directly (skipping `default`).
+ *                Overrides `mutating`, `execution`, and `network` to
+ *                `deny` and sets `defaultDecision: deny`. The
+ *                read-then-plan mode; nothing mutates, nothing executes.
+ *
+ * Why `plan` extends `readonly` and not `default`? Plan mode wants
+ * `mutating: deny`, not `mutating: ask` — extending `default` would
+ * first inherit `mutating: ask` from `default`, then override it to
+ * `deny`. Functionally the same after deep-merge, but the intent is
+ * cleaner this way: `plan` only needs `readonly`'s permissive base
+ * (the things it allows) and adds its own restrictions on top.
  *
  * Stock `toolMetadata` provides base tags + aspect declarations for the
  * 7 built-in tools. Extension tools (pfs_*, git_*, bfs, ripgrep, run, Agent,
@@ -23,24 +44,43 @@ const USER_PATH = () => join(homedir(), ".pi", "tool-policy.json")
  * `pi.toolMetadata` (see tool-metadata.ts).
  */
 export const STOCK_CONFIG: Config = {
-  modeOrder: ["default", "plan", "edit"],
+  modeOrder: ["readonly", "default", "edit", "plan"],
   modes: {
-    default: {
-      description: "Permissive baseline; auto-allow readonly, ask for everything else",
+    readonly: {
+      description: "Read-only base; allows readonly and metadata, asks for everything else",
       defaultDecision: "ask",
       tagRules: {
         readonly: "allow",
+        metadata: "allow",
+      },
+      toolRules: {},
+      aspectRules: {},
+    },
+    default: {
+      description: "Permissive baseline; auto-allow readonly, ask for everything else",
+      extends: ["readonly"],
+      defaultDecision: "ask",
+      tagRules: {
         mutating: "ask",
         execution: "ask",
-        metadata: "allow",
         network: "ask",
+      },
+      toolRules: {},
+      aspectRules: {},
+    },
+    edit: {
+      description: "Permissive edit mode; mutating operations allowed",
+      extends: ["default"],
+      defaultDecision: "ask",
+      tagRules: {
+        mutating: "allow",
       },
       toolRules: {},
       aspectRules: {},
     },
     plan: {
       description: "Read-only; plan changes without making them",
-      extends: ["default"],
+      extends: ["readonly"],
       defaultDecision: { verdict: "deny", reason: "plan mode denies all by default" },
       tagRules: {
         mutating: { verdict: "deny", reason: "mutating operations not allowed in plan mode" },
@@ -53,19 +93,6 @@ export const STOCK_CONFIG: Config = {
         mode: "replace",
         text: "You are in plan mode. You may not modify files, run commands, or take any side-effecting action. Generate a plan and present it to the user; do not execute it.",
       },
-    },
-    edit: {
-      description: "Permissive edit mode; mutating operations allowed",
-      defaultDecision: "ask",
-      tagRules: {
-        readonly: "allow",
-        mutating: "allow",
-        execution: "ask",
-        metadata: "allow",
-        network: "ask",
-      },
-      toolRules: {},
-      aspectRules: {},
     },
   },
   allowedPaths: [],

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import { ModeController } from "./mode-controller.ts"
+import { computeExtendsChain } from "./mode-controller.ts"
 import type { Config } from "./types.ts"
 
 function makeConfig(modeOrder: string[]): Config {
@@ -169,6 +170,151 @@ describe("ModeController", () => {
       expect(c.getWarnings()).toEqual([])
       c.setWarnings(["w1", "w2"])
       expect(c.getWarnings()).toEqual(["w1", "w2"])
+    })
+  })
+
+  describe("getExtendsChain", () => {
+    it("returns just the current mode for a standalone mode (no extends)", () => {
+      const c = new ModeController()
+      c.reset(makeConfig(["solo"]))
+      const config: Config = {
+        modeOrder: ["solo"],
+        modes: {
+          solo: { description: "solo", defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+        },
+        allowedPaths: [],
+        taggingRules: [],
+        toolMetadata: {},
+      }
+      expect(c.getExtendsChain(config)).toEqual(["solo"])
+    })
+
+    it("returns [child, parent] for a two-mode chain", () => {
+      const c = new ModeController()
+      c.reset(makeConfig(["child"]))
+      const config: Config = {
+        modeOrder: ["child", "parent"],
+        modes: {
+          child: {
+            description: "child",
+            extends: ["parent"],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+          parent: { description: "parent", defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+        },
+        allowedPaths: [],
+        taggingRules: [],
+        toolMetadata: {},
+      }
+      expect(c.getExtendsChain(config)).toEqual(["child", "parent"])
+    })
+
+    it("walks the full chain for a three-mode inheritance (edit → default → readonly)", () => {
+      const c = new ModeController()
+      c.reset(makeConfig(["edit"]))
+      const config: Config = {
+        modeOrder: ["edit", "default", "readonly"],
+        modes: {
+          edit: {
+            description: "edit",
+            extends: ["default"],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+          default: {
+            description: "default",
+            extends: ["readonly"],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+          readonly: { description: "readonly", defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+        },
+        allowedPaths: [],
+        taggingRules: [],
+        toolMetadata: {},
+      }
+      expect(c.getExtendsChain(config)).toEqual(["edit", "default", "readonly"])
+    })
+
+    it("stops at the first unknown link in the chain (returns what we collected)", () => {
+      const c = new ModeController()
+      c.reset(makeConfig(["child"]))
+      const config: Config = {
+        modeOrder: ["child"],
+        modes: {
+          child: {
+            description: "child",
+            extends: ["ghost"], // ghost is not defined
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+        },
+        allowedPaths: [],
+        taggingRules: [],
+        toolMetadata: {},
+      }
+      expect(c.getExtendsChain(config)).toEqual(["child"])
+    })
+
+    it("short-circuits a cycle (a → b → a) instead of infinite-looping", () => {
+      const c = new ModeController()
+      c.reset(makeConfig(["a"]))
+      const config: Config = {
+        modeOrder: ["a", "b"],
+        modes: {
+          a: {
+            description: "a",
+            extends: ["b"],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+          b: {
+            description: "b",
+            extends: ["a"],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+        },
+        allowedPaths: [],
+        taggingRules: [],
+        toolMetadata: {},
+      }
+      const chain = c.getExtendsChain(config)
+      // Must terminate (no infinite loop). Must contain each mode
+      // at most once.
+      expect(new Set(chain).size).toBe(chain.length)
+      expect(chain[0]).toBe("a")
+    })
+
+    it("returns [] for an unknown current mode (the mode is not in the config)", () => {
+      // The pure helper computes the chain from a config that doesn't
+      // contain the requested mode — returns []. The ModeController's
+      // `setMode` rejects unknown modes (covered in a separate test
+      // above), so this case can only be reached via the pure helper
+      // with a manually-constructed config.
+      const config: Config = {
+        modeOrder: ["default"],
+        modes: {
+          default: { description: "d", defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+        },
+        allowedPaths: [],
+        taggingRules: [],
+        toolMetadata: {},
+      }
+      expect(computeExtendsChain(config, "missing")).toEqual([])
     })
   })
 })

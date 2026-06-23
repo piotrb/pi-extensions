@@ -36,11 +36,11 @@ deny > ask > allow
 `policy.ts` exports `evaluate(event, config, currentMode, effectiveTags, toolMetadata, ctx)`. Within a single mode, in eval order:
 
 1. **`tagRules`** for each tag in `effectiveTags`.
-2. **`aspectRules`** for each declared aspect binding on the tool. For each aspect, iterate `decl.fields` per `FieldBinding`: scalar bindings use `coerceForMatch(value)` and dispatch to `matchAspect`; array-mode bindings iterate `string[]` and dispatch to `matchAspectEach`. Each binding contributes one `applied` / `suppressed` / `noop` entry to the rule trail; most-restrictive wins across all bindings on the aspect. See `pi-tool-policy-per-field-aspect-cardinality` for the per-field loop and the dispatch-key gotcha.
+2. **`aspectRules`** for each declared aspect binding on the tool. For each aspect, iterate `decl.fields` per `FieldBinding`: scalar bindings use `coerceForMatch(value)` and dispatch to `matchAspect`; array-mode bindings iterate `string[]` and dispatch to `matchAspectEach`. Each binding contributes one `applied` / `shadowed` / `noop` entry to the rule trail. The combine is **per-layer most-specific-wins** (not flat most-restrictive): the matcher first computes the most-restrictive verdict within each layer (aspect / tool / tag / default), then picks the most-specific layer's verdict as the global winner. `deny` is sticky — if any layer produces `deny`, the global verdict is `deny`. See `pi-tool-policy-per-field-aspect-cardinality` for the per-field loop and the dispatch-key gotcha.
 3. **`toolRules[tool]`** entries (with `fields` clause matching).
 4. **`defaultDecision`** as the fall-through.
 
-The `ruleTrail` records each rule with status `applied` / `suppressed` / `noop`. The reason is the concatenation of applied rules' reasons, with a synthesized `Rejected by rule: <layer>:<key>` fallback.
+The `ruleTrail` records each rule with status `applied` / `shadowed` / `noop`. `applied` is the layer winner AND the global winner; `shadowed` is less restrictive than the layer winner; `noop` is the same value as the layer winner. The trail is in matcher evaluation order (tag → aspect → tool → default); the modal sorts it top-down by priority for display (applied first, then shadowed/noop grouped by layer specificity). The reason is the concatenation of applied rules' reasons, with a synthesized `Matched rule: <id>` fallback for the deny path.
 
 `coerceForMatch(value): string | undefined` is the v2 type-driven version: string / string[] joined with " " / throw on non-primitive. It does not take an aspect-name parameter.
 
@@ -69,7 +69,7 @@ The `picomatchCache` is module-level to avoid repeated compilation. Do not recre
 4. Resolves project-relative `allowedPaths` to absolute paths.
 5. Returns `{ config, warnings, sources }`.
 
-`STOCK_CONFIG` is the in-source fallback. It contains the three default modes (`default`, `plan`, `edit`) plus the built-in `toolMetadata`. If the user has no config, the stock config is used.
+`STOCK_CONFIG` is the in-source fallback. It contains four stock modes (`readonly`, `default`, `edit`, `plan`) plus the built-in `toolMetadata`. The stock modes form an inheritance chain: `default` extends `readonly` (inherits the readonly+metadata allow base and adds mutating/execution/network asks); `edit` extends `default` (adds `mutating: allow`); `plan` extends `readonly` directly (adds the mutating/execution/network denies plus `defaultDecision: deny`). If the user has no config, the stock config is used.
 
 ## Tool metadata aggregation
 
