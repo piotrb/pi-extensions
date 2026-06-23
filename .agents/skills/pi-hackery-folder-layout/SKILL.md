@@ -18,7 +18,7 @@ packages/pi-hackery/
       hackery.test.ts                     # co-located test
   bases/                                  # source of truth for the pi-hackery tree
     agents/                               # sub-agent bases (coder, explorer, planner, reviewer)
-    skills/                               # skill bases (code, learn, learning-management, plan, …)
+    skills/                               # skill bases (code, learn, hackery-file-management, plan, …)
   skills/                                 # published snapshots, propagated by hackery-update-skill
     <name>/
       SKILL.md                            # one folder per skill, name matches folder
@@ -26,14 +26,13 @@ packages/pi-hackery/
     skills/                               # symlink or mirror (this package's own skills)
       hackery-update-skill/SKILL.md
       update-skill/                       # a local utility for maintaining the bases/skills/ tree
-  plans/                                  # per-feature plans (NOT shipped)
 ```
 
 ## Where things go
 
 ### New skill for the workspace
 
-`packages/pi-hackery/skills/<name>/` is **not** the home for workspace-wide learnings. Workspace learnings live at `.agents/skills/<name>/` (see `learning-management`). The `packages/pi-hackery/skills/` tree is for the package's own published skills, propagated from `bases/skills/` by `hackery-update-skill`.
+`packages/pi-hackery/skills/<name>/` is **not** the home for workspace-wide learnings. Workspace learnings live at `.agents/skills/<name>/` (see `hackery-file-management`). The `packages/pi-hackery/skills/` tree is for the package's own published skills, propagated from `bases/skills/` by `hackery-update-skill`.
 
 ### New skill for pi-hackery
 
@@ -51,15 +50,11 @@ Sub-agent bases (the prompts that define a sub-agent's role and behavior) live a
 
 Sub-agent bases are not propagated to a "published" tree — the bases themselves are the source of truth, and the framework skills (`plan`, `design`, etc.) instantiate them.
 
-### New plan
-
-Per-feature plans (the `*.md` files describing a phased implementation) live at `packages/pi-hackery/plans/`. Plans are not shipped (the `files` allowlist in `package.json` excludes them). They are working documents that the `plan` and `blueprint` skills write to and the `implement` skill reads from.
-
 ## The two skill trees
 
 There are **two distinct skill trees** in this repo:
 
-1. **Workspace learnings** at `.agents/skills/<name>/SKILL.md`. Discoverable via `.agents/learning-index.md`, which `AGENTS.md` references. The `learning-management` skill owns the conventions for this tree.
+1. **Workspace learnings** at `.agents/skills/<name>/SKILL.md`. Discoverable via `.agents/learning-index.md`, which `AGENTS.md` references. The `hackery-file-management` skill owns the conventions for this tree.
 
 2. **pi-hackery's own skills** at `packages/pi-hackery/skills/<name>/SKILL.md`. Discoverable via `hackery-update-skill` and the pi runtime. The `base-publisher-hand-off` skill owns the conventions for this tree.
 
@@ -76,8 +71,8 @@ Inside `packages/pi-hackery/`, every published skill has a corresponding base. T
 ## What this skill does not do
 
 - It does not cover other packages' layouts — they follow their own conventions (most are flat, no `bases/` or `skills/`).
-- It does not cover the workspace-wide `.agents/` tree beyond this one paragraph — the `learning-management` skill owns those conventions.
-- It does not cover the `plans/` folder's maintenance workflow — the `plan` and `blueprint` skills own that.
+- It does not cover the workspace-wide `.agents/` tree beyond this one paragraph — the `hackery-file-management` skill owns those conventions.
+- It does not cover plan storage — the `hackery-file-management` skill owns where plans live (`.agents/plans/`, project-root-scoped).
 
 ## Related
 

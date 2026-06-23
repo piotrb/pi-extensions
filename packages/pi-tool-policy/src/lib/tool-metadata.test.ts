@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import type { ToolInfo } from "@earendil-works/pi-coding-agent"
 import { describe, expect, it } from "vitest"
 
-import { aggregateToolMetadata, STOCK_BUILTIN_TOOL_METADATA } from "./tool-metadata.ts"
+import { aggregateToolMetadata, deepMergeToolMetadata, STOCK_BUILTIN_TOOL_METADATA } from "./tool-metadata.ts"
 import type { ToolMetadata } from "./types.ts"
 
 function makeToolInfo(name: string, sourcePath?: string): ToolInfo {
@@ -262,5 +262,54 @@ describe("ToolMetadata shape", () => {
     }
     expect(m.aspects.path?.mode).toBe("path")
     expect(m.aspects.custom?.fields).toEqual(["url"])
+  })
+})
+
+describe("deepMergeToolMetadata — enabled field", () => {
+  // Minimal aspects object — `enabled` is orthogonal to the aspect shape
+  // and we don't want the test to depend on the built-in metadata layout.
+  const aspects = { path: { mode: "path" as const, fields: ["path"] } }
+
+  it("accepts `enabled: false` on a stock override", () => {
+    const result = deepMergeToolMetadata(undefined, { enabled: false, aspects })
+    expect(result.enabled).toBe(false)
+  })
+
+  it("accepts `enabled: true` on a stock override", () => {
+    const result = deepMergeToolMetadata(undefined, { enabled: true, aspects })
+    expect(result.enabled).toBe(true)
+  })
+
+  it("omits `enabled` when neither layer declares it (default: no override)", () => {
+    const result = deepMergeToolMetadata(undefined, { aspects })
+    expect(result.enabled).toBeUndefined()
+  })
+
+  it("override `enabled: false` wins over base `enabled: true`", () => {
+    const base: ToolMetadata = { enabled: true, aspects }
+    const override: ToolMetadata = { enabled: false, aspects }
+    expect(deepMergeToolMetadata(base, override).enabled).toBe(false)
+  })
+
+  it("override `enabled: true` wins over base `enabled: false`", () => {
+    const base: ToolMetadata = { enabled: false, aspects }
+    const override: ToolMetadata = { enabled: true, aspects }
+    expect(deepMergeToolMetadata(base, override).enabled).toBe(true)
+  })
+
+  it("override absent falls back to base's `enabled`", () => {
+    const base: ToolMetadata = { enabled: true, aspects }
+    const override: ToolMetadata = { aspects }
+    expect(deepMergeToolMetadata(base, override).enabled).toBe(true)
+  })
+
+  it("non-boolean `enabled` on the override is treated as a no-op (typo defense)", () => {
+    // `package.json` `pi.toolMetadata` is untyped at parse time; a
+    // malformed value like `enabled: "yes"` should fall through to the
+    // base's `enabled` (here: `true`) rather than being preserved as
+    // a non-boolean that the reload helper can't interpret.
+    const base: ToolMetadata = { enabled: true, aspects }
+    const override = { enabled: "yes", aspects } as unknown as ToolMetadata
+    expect(deepMergeToolMetadata(base, override).enabled).toBe(true)
   })
 })

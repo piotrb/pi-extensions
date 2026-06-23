@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext, ToolCallEventResult, ToolInfo } fr
 
 import { buildCoverageReport } from "../lib/coverage.ts"
 import { checkAndPrompt, DirectoryPermissionsState } from "../lib/directory-permissions.ts"
+import { applyEnabledOverrides } from "../lib/enabled-tools.ts"
 import { computeExtendsChain } from "../lib/mode-controller.ts"
 import { buildNoUIBlockReason } from "../lib/no-ui-block.ts"
 import { openDirectoryPermissionsModal } from "../lib/modal/directory-permissions-modal.ts"
@@ -80,6 +81,10 @@ export default function (pi: ExtensionAPI): void {
   // session_start and on every tool_call (so freshly-registered tools show up
   // in the debug view). Used by the `/tool_policy → Debug → Tools` dump.
   let liveTools: ToolInfo[] = []
+  // enabledCache tracks the last-applied enabled-set signature so a no-op
+  // reload (same config) does not call `pi.setActiveTools(...)` redundantly
+  // per tool_call. Initialized to null and seeded on the first `session_start`.
+  let enabledCache: { signature: string; set: Set<string> } | null = null
   const directoryState = new DirectoryPermissionsState()
   const modeController = new ModeController()
   // runtimeGrants tracks "allow for this session" choices from the policy-ask
@@ -97,6 +102,11 @@ export default function (pi: ExtensionAPI): void {
     modeController.reset(config)
     modeController.setWarnings(warnings)
     modeController.refreshStatusBar(ctx)
+    // Apply any `toolMetadata[*].enabled` overrides to the runtime active-tools
+    // set. Runs unconditionally on session_start — YOLO is a per-`tool_call`
+    // gate, not a session-level concern; the helper itself is a no-op when no
+    // overrides are declared.
+    enabledCache = applyEnabledOverrides(config, pi, enabledCache ?? undefined)
   })
 
   // ── before_agent_start: inject additionalInstructions for the active mode ──
@@ -165,6 +175,14 @@ export default function (pi: ExtensionAPI): void {
       // tools that other extensions registered after session_start.
       liveTools = pi.getAllTools()
       const { config } = await loadConfig(ctx.cwd)
+
+      // Reconcile the runtime active-tools set against any
+      // `toolMetadata[*].enabled` declarations in the freshly-loaded config.
+      // Skipped when YOLO mode is active (the early-return above handles the
+      // gate; this gate is about the helper's own side-effect, not the policy
+      // decision). The helper is a no-op when no overrides are declared, and
+      // a signature-skip when the config hasn't changed.
+      enabledCache = applyEnabledOverrides(config, pi, enabledCache ?? undefined)
 
       // 1. Tagger rules augment the effective tag set.
       const staticTags = toolMetadata.metadata.get(event.toolName)?.tags ?? []

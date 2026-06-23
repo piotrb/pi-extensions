@@ -11,7 +11,7 @@ You are deciding where a new skill belongs, or auditing an existing one's tier a
 
 The agent always sees these. They are preloaded by `pi-context-preloader`, which follows `@`-references in `AGENTS.md` core list, then in the loaded files (recursively up to `MAX_DEPTH=5`).
 
-A core skill's entry in `.agents/learning-index.md` carries an `@`-reference on its own line. The preloader pattern matches `@` plus a path with a file extension, and resolves it relative to the file containing the reference. Inside the index (which lives in `.agents/`) the canonical shape is `@` followed by `skills/<name>/SKILL.md`. For example, the `pi-package-scaffold` core entry has the heading followed by a line that starts with `@` and the path `skills/pi-package-scaffold/SKILL.md`. See `learning-management` for the resolution rule and the trap of writing the path project-root-relative (which would resolve to `.agents/.agents/skills/...` and miss).
+A core skill's entry in `.agents/learning-index.md` carries an `@`-reference on its own line. The preloader pattern matches `@` plus a path with a file extension, and resolves it relative to the file containing the reference. Inside the index (which lives in `.agents/`) the canonical shape is `@` followed by `skills/<name>/SKILL.md`. For example, the `pi-package-scaffold` core entry has the heading followed by a line that starts with `@` and the path `skills/pi-package-scaffold/SKILL.md`. See `hackery-file-management` for the resolution rule and the trap of writing the path project-root-relative (which would resolve to `.agents/.agents/skills/...` and miss).
 
 The `@`-reference is the signal. The preloader follows it; the skill is loaded.
 
@@ -71,4 +71,4 @@ Remove the `@`-reference from the index entry. The skill remains in the index, w
 
 - It does not own the preloader — that is `pi-context-preloader`'s job. This skill teaches the convention; the preloader enforces it.
 - It does not enumerate which skills are core — that is a separate audit. The current assignment is in `.agents/learning-index.md`.
-- It does not override the `learning-management` skill's storage and dispatch rules — those are the framework; this skill is project-specific.
+- It does not override the `hackery-file-management` skill's storage and dispatch rules — those are the framework; this skill is project-specific.

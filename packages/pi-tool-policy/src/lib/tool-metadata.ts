@@ -239,5 +239,12 @@ export function deepMergeToolMetadata(base: ToolMetadata | undefined, override: 
   return {
     tags: [...(base.tags ?? []), ...(override.tags ?? [])].filter((t, i, a) => a.indexOf(t) === i),
     aspects: { ...base.aspects, ...override.aspects },
+    // Last-write-wins per layer: a non-boolean `enabled` (e.g. a typo'd
+    // `enable: true` from package.json) falls back to the base value rather
+    // than collapsing to `undefined`, so a malformed declaration is a no-op
+    // instead of a type-cast surprise. `enabled: false` is a real declaration
+    // and overrides `enabled: true` on the base; an unset `enabled` inherits
+    // from the base.
+    enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
   }
 }

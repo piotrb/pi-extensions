@@ -151,6 +151,13 @@ export interface AspectDeclaration {
 export interface ToolMetadata {
   /** Static base tags. */
   tags?: string[]
+  /**
+   * When set, the tool's presence in the runtime active-tools set is
+   * overridden on the next config reload: `false` removes it, `true`
+   * adds it. Unset means "no override" (tool follows its default
+   * registration state).
+   */
+  enabled?: boolean
   /** Aspect declarations for this tool. */
   aspects: Record<string, AspectDeclaration>
 }

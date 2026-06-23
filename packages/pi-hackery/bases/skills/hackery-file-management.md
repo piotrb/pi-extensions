@@ -1,8 +1,15 @@
-Write a skill that **encodes the conventions for managing a project's learning base**, so other skills can reference them in one place instead of restating them.
+Write a meta-skill that **encodes the conventions for managing the project's shared agent-runtime files** — the workspace-level artifacts that the agent and human both read and write. The skill owns two trees under `.agents/`:
 
-This is a **meta-skill**: it does not add, update, or remove learnings itself. It documents the rules that learning-management skills (and skill-authoring skills more broadly) are expected to follow.
+1. **Learnings** (`.agents/skills/<name>/SKILL.md`) — durable knowledge the LLM does not have. Discovered and authored by the `learn` skill. Dispatched via `.agents/learning-index.md`.
+2. **Plans** (`.agents/plans/<feature>.md`) — per-feature implementation plans. Produced by the `plan` skill (and `blueprint`, `design`). Read on demand by humans and by downstream implementation skills; not preloaded.
+
+Both trees are **project-root-scoped**, not package-scoped. They live under `.agents/` because they describe workspace-wide concerns, not package-internal ones. Putting them at `packages/<pkg>/plans/` or `packages/<pkg>/skills/` would break that scoping — plans for a `pi-tool-policy` feature are about the **workspace**, not about `pi-hackery`; `pi-hackery`'s own conventions just happen to govern how the plan is produced.
+
+This is a **meta-skill**: it does not add, update, or retire learnings or plans itself. It documents the rules that the `learn`, `plan`, `blueprint`, and other skill-authoring skills are expected to follow.
 
 ### What this skill encodes
+
+#### Learnings — `.agents/skills/<name>/SKILL.md`
 
 - **Storage layout.** Each learning lives as a skill file at `.agents/skills/<name>/SKILL.md` with proper skill frontmatter (`name` and `description`).
 - **Naming.** The folder name and the `name` frontmatter field are the same string. Name skills after the **concept** they encode, not the first instance where you learned it. Ask "would I still pick this name if I'd seen the rule from a different trigger?" If the answer is no, the name leaks scope. For package-specific rules where the package is the concept, naming after the package is correct.
@@ -18,13 +25,23 @@ This is a **meta-skill**: it does not add, update, or remove learnings itself. I
 
 - **`@`-references are for preloading, not for "see also" pointers.** The preloader follows every `@`-reference it finds, so a `@`-reference to a sibling skill pulls that skill's body into the system prompt at session start. That is the wrong tool for "the agent may also want to know about this". A `Related` section (or any inline "see also" pointer in skill prose) is **not** a preload directive — it is a dispatch hint. Write the pointer as a backtick-quoted skill name (`<skill-name>`) and let the agent consult the index and load on demand. The index is the only hub; skills do not preload their siblings.
 
+#### Plans — `.agents/plans/<feature>.md`
+
+- **Storage layout.** Each plan is a single Markdown file at `.agents/plans/<feature>.md`. The filename is kebab-case and describes the feature, not the date or author. Plans are **not** preloaded — they are working documents read on demand.
+- **Project-root scope.** Plans live under `.agents/` because they describe workspace-wide implementations, not package-internal ones. A plan that targets `packages/pi-tool-policy/` is still a workspace concern; it is not a `pi-hackery` artifact.
+- **Not shipped.** Plans are not part of any npm package; they are not in the `files` allowlist of any `package.json`. They are local working documents.
+- **Authoring skills.** The `plan` skill produces these. `blueprint` and `design` may produce related artifacts that live alongside plans, but the canonical plan format is the `plan` skill's output.
+- **Consumers.** Humans read them directly. The downstream implementation skill (`code`, or any skill the `plan` skill hands off to) reads them as its primary input.
+- **No dispatch index.** Plans are not in `.agents/learning-index.md`. They are discovered by filesystem lookup, not by dispatch. If a plan is referenced from a skill, the reference is a backtick-quoted relative path (`` `.agents/plans/<feature>.md` ``), not an `@`-preload.
+
 ### What this skill does not do
 
-- It does not create, update, or retire learnings.
+- It does not create, update, or retire learnings or plans.
 - It does not edit production code, run tests, or write session reports.
 - It does not dispatch to individual learnings — the index file does that.
+- It does not cover the contents of a plan (the `plan` skill owns that); it only covers where plans go and how they are referenced.
 
 ### Standing guidelines
 
 - Brief, purposeful tone; declarative voice.
-- The conventions documented here are the source of truth — learning-management skills reference this skill rather than restating its rules.
+- The conventions documented here are the source of truth — the `learn`, `plan`, `blueprint`, and other skill-authoring skills reference this skill rather than restating its rules.

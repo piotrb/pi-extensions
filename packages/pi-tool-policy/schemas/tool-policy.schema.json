@@ -142,6 +142,7 @@
       "additionalProperties": false,
       "properties": {
         "tags": { "type": "array", "items": { "type": "string" } },
+        "enabled": { "type": "boolean" },
         "aspects": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/AspectDeclaration" }

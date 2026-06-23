@@ -7,7 +7,7 @@ circumstances to use it, so a reader can route without loading the skill itself.
 The index is a derived artifact. After **any** edit to a learning (create, update, or retire),
 update the matching entry here. Do not leave the index inconsistent with the skills it dispatches to.
 
-Referenced from `AGENTS.md`. (The `@`-references in this index are relative to this file's directory — see the `learning-management` skill for the convention.)
+Referenced from `AGENTS.md`. (The `@`-references in this index are relative to this file's directory — see the `hackery-file-management` skill for the convention.)
 
 ## Dispatch tiers
 

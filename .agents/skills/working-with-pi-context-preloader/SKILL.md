@@ -39,7 +39,7 @@ function resolveRefs(content: string, cwd: string, visited: Set<string>, depth: 
 - Recursive: a loaded file's own `@refs` are followed up to `MAX_DEPTH` deep.
 - Deduplicated via `visited` set across the full resolution tree.
 
-The reference path is always relative to the file that contains the reference — see `learning-management` for the convention and the doubled-prefix trap.
+The reference path is always relative to the file that contains the reference — see `hackery-file-management` for the convention and the doubled-prefix trap.
 
 ## AGENTS.md discovery
 
@@ -91,4 +91,4 @@ When adding a new lifecycle hook:
 
 - It does not cover the lifecycle hook pattern in detail — see `pi-lifecycle-hooks`.
 - It does not cover the canonical `pi-*` package shape — see `pi-package-scaffold`.
-- It does not cover the `@`-reference path conventions — see `learning-management`.
+- It does not cover the `@`-reference path conventions — see `hackery-file-management`.
