@@ -6,6 +6,7 @@ Write a skill for orchestrating a test-driven software implementation. The skill
 - The one carve-out: it writes the final session report (documentation, not coding).
 - All context comes from the plan file. No independent exploration.
 - It pauses only for genuine blockers or ambiguity. Default is to keep moving — don't pause between phases unless asked.
+- **Skills to consider.** The plan may include a "skills to consider" section listing skill names the upstream planning skill flagged as relevant to the implementation (e.g. `working-with-pi-git`, `pi-monorepo-overview`). Treat that list as authoritative for this run. **Load every named skill yourself, then pass the loaded skills into each coder brief** so the coders follow the project's conventions for tests, layout, and tools. The reviewer's scope includes verifying that the implementation honored those skills.
 
 ### Required parameters (adapt to the domain)
 
@@ -18,8 +19,8 @@ Write a skill for orchestrating a test-driven software implementation. The skill
 ### Workflow steps
 
 1. **Parse plan.** Determine execution mode. Read the plan file. Decompose into phases and steps. Carry forward any provenance pointer (a `Parent:` reference). Summarize the parsed phases/steps back to the user for a sanity check before starting.
-2. **Implement.** Process phases sequentially. Within each, fan out to parallel coder subagents in a single batched call, inlining the full plan plus the specific step into each task. Wait for all coders in a phase before advancing. **The blocking gate is tests: if any coder reports a blocker or a failed Red Phase, stop the workflow and surface it — never advance to the next phase with broken or failing tests.** On success, emit a one-line phase summary and continue.
-3. **Review.** After all phases, delegate to the reviewer to confirm the plan was fully implemented by inspecting the actual codebase (not the plan's claims or the coders' self-reports). On COMPLETE, continue. On INCOMPLETE, present the gaps checklist verbatim, do **not** auto-fix, and ask the user how to proceed.
+2. **Implement.** Process phases sequentially. Within each, fan out to parallel coder subagents in a single batched call, inlining the full plan plus the specific step into each task, **and including every skill from the plan's "skills to consider" section** so the coders follow the relevant project conventions. Wait for all coders in a phase before advancing. **The blocking gate is tests: if any coder reports a blocker or a failed Red Phase, stop the workflow and surface it — never advance to the next phase with broken or failing tests.** On success, emit a one-line phase summary and continue.
+3. **Review.** After all phases, delegate to the reviewer to confirm the plan was fully implemented by inspecting the actual codebase (not the plan's claims or the coders' self-reports), **including compliance with every skill from the plan's "skills to consider" section**. On COMPLETE, continue. On INCOMPLETE, present the gaps checklist verbatim, do **not** auto-fix, and ask the user how to proceed.
 4. **Report.** Compute today's date and write a session report to a dated, conventional path (e.g. `<root>/<yyyy>/<mm>/<dd>/<title>-session-report.md`). Sections: objective, plan summary, what was built (with file paths), challenges & solutions, deviations from plan, **test results**, outstanding issues, review verdict. Preserve the provenance pointer (recompute the relative path from the report's location). Present the report back and print its path. Close by naming the natural follow-on (e.g. a `learn`-style skill to encode reusable knowledge).
 
 ### Baked-in principles
@@ -29,6 +30,7 @@ Write a skill for orchestrating a test-driven software implementation. The skill
 - **Single-writer discipline.** No two parallel coders touch the same file. The planner enforces it, but the orchestrator stops and asks if it spots a conflict.
 - **Verify against reality.** Completion is judged by inspecting the codebase, not by trusting the plan or the coders.
 - **No silent auto-fixing.** Gaps and ambiguities go back to the user with concrete options plus an open-ended choice; the orchestrator recommends but doesn't decide unilaterally.
+- **Skill-aware implementation.** The plan's "skills to consider" section is part of the contract. Load those skills before dispatching coders, pass them into every coder brief, and have the reviewer verify they were followed. A run that completes the steps but violates a loaded skill is not complete.
 - **Brief, action-focused communication.** Terse status updates; minimal explanation.
 
 ### Escalation

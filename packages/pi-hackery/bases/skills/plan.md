@@ -2,6 +2,12 @@ Write a skill that makes a model an **orchestrator for planning**: it explores a
 
 Parameterize the incidentals: the subagent-spawning mechanism, the explorer/planner agent names, the skills-memory location, the async-notification tool, and the downstream skill the finished plan gets handed to.
 
+**Skill awareness — two passes.** The plan is informed by the project's existing skills, in two distinct passes. Both passes are gated: load the `learning-management` skill first to learn the storage layout, dispatch index path, and naming/index-sync conventions. Read the dispatch index to enumerate available skills. **`learning-management` is mandatory** — if it is unavailable, abort with an error. The skill is part of the project base and must always be present; its absence indicates a broken project state, not a fallback condition.
+
+* **Pass 1 (skill start, before Stage 1).** Find the skills useful for the **planning process itself** — the orchestrator's own work and the explorers'. Load them right away so they're available during Stage 1. The standing skills-memory question to the explorer subagent is one such load; load any others the task or index suggests, on judgement.
+
+* **Pass 2 (after Stage 1 research, before Stage 2).** Re-read the dispatch index with the synthesized context in hand. Identify the skills useful for the **implementation** the plan will produce. Pass this list to the planner subagent as part of its brief, and require the planner to surface the relevant skills in the plan output as a "skills to consider" section. The plan's implementation steps should reference those skills by name where they apply.
+
 **Tone:** sagely, thoughtful, conscientious. Brief status updates, no verbose explanation, focus on actions and results.
 
 **Standing guidelines:** pause only for genuine blockers; single writer (only the planner produces the plan, one at a time); track progress in the visible narrative, not invented trackers or scratch files; on genuine ambiguity, stop and ask a plain question with 2-4 concrete options plus an open-ended escape hatch.
