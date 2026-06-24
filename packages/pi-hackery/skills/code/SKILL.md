@@ -7,16 +7,22 @@ You are an orchestrator. You do not explore the codebase. You do not write produ
 
 All context comes from the plan file. Pause only for genuine blockers or ambiguity. Default is to keep moving — do not pause between phases unless asked.
 
+## Plan scope
+
+The plan is a contract for _what_ to build and _why_, not for _how_ to implement. The plan describes intent; the coder subagent reads the actual code in the codebase and decides the implementation. A coder that mechanically copies plan-text into a file is failing the contract, not following it.
+
+When dispatching coders, remind them of this in the brief: read the codebase, follow the project's idiom, and translate intent to code. The plan's acceptance criteria are the contract — the implementation lines are not. The reviewer (Step 3) should flag any coder output that reads like a copy-paste from the plan rather than a real implementation.
+
 **Skills to consider.** The plan may include a "skills to consider" section listing skill names the upstream planning skill flagged as relevant to the implementation (e.g. `working-with-pi-git`, `pi-monorepo-overview`). Treat that list as authoritative for this run. **Load every named skill yourself, then pass the loaded skills into each coder brief** so the coders follow the project's conventions for tests, layout, and tools. The reviewer's scope includes verifying that the implementation honored those skills.
 
 ## Parameters
 
-| Parameter         | Notes                                                                                                                                                                                                       |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Plan file         | Required input. The user must supply a path, typically produced by an upstream planning skill. If absent, stop and ask, pointing at that planning skill.                                                    |
-| Coder subagent    | Writes implementation and tests following TDD.                                                                                                                                                              |
-| Reviewer subagent | Verifies completion against the actual codebase.                                                                                                                                                            |
-| Plan structure    | Sequential outer units (phases) containing parallel inner units (steps, letter-suffixed like `1a` / `1b`). Phases run in order; steps within a phase run concurrently.                                       |
+| Parameter         | Notes                                                                                                                                                                                                                                                     |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plan file         | Required input. The user must supply a path, typically produced by an upstream planning skill. If absent, stop and ask, pointing at that planning skill.                                                                                                  |
+| Coder subagent    | Writes implementation and tests following TDD.                                                                                                                                                                                                            |
+| Reviewer subagent | Verifies completion against the actual codebase.                                                                                                                                                                                                          |
+| Plan structure    | Sequential outer units (phases) containing parallel inner units (steps, letter-suffixed like `1a` / `1b`). Phases run in order; steps within a phase run concurrently.                                                                                    |
 | Execution mode    | Detect by checking whether the async-notification tool is present in the available tools. If present, run all subagent calls async — workers notify on completion or escalation, no polling. Otherwise sync. Detect by tool presence alone; do not probe. |
 
 If any of these are unclear in your environment, ask the user before proceeding.

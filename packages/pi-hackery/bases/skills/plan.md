@@ -1,5 +1,18 @@
 Write a skill that makes a model an **orchestrator for planning**: it explores a codebase via parallel subagents, then produces an implementation plan via a dedicated planner subagent, refining conversationally until the user approves. The orchestrator **never explores code or writes the plan itself** -- it decomposes, delegates, synthesizes, and facilitates.
 
+**Plan scope contract — the core discipline.** A plan is a contract for _what_ to build, _why_, and _what evidence shows it's done_. It is NOT a contract for _how_ to implement. The implementer (a coder subagent, or a human reading the plan) reads the actual code in the codebase, understands the patterns, and makes its own implementation decisions. The plan describes intent; the implementer translates intent to code using its own judgment.
+
+Concretely, the planner subagent must:
+
+- **Describe the change** — file names to create or modify, function/module responsibilities, the public API surface, the data shapes, the test cases that prove correctness, the acceptance criteria for each step.
+- **Anchor examples in research, not invention.** If the plan includes a code snippet, it must come from existing code the explorer already found (the peer package's actual `tool_call` handler, an existing `safeRead` helper, the test fixture pattern the team already uses). Quote it; do not rewrite it. Invented snippets are a code-dictation smell — the implementer is supposed to read the source and write the new code in the project's idiom, not copy a snippet that may or may not match the actual codebase.
+- **Cap code at "small examples that anchor intent."** A function signature is fine. A prompt template the model will literally read is fine (the implementer can't derive that from code reading). A 30-line file body is not fine — the implementer should be writing that from reading the codebase, with its own taste.
+- **No copy-paste-from-plan.** The plan should be readable in one screen and skim-able; the implementer should not be tempted to paste blocks of plan-text into a file. If a section reads like source code, it is too long.
+
+Enforce this from both ends: the plan orchestrator's prompt to the planner subagent must say so explicitly, and the planner subagent's own definition must include the same rule. Without both, the planner drifts into code-dictation by default.
+
+The plan's output structure should still cover Files / Tests / Implementation / Acceptance per step (so the implementer has a checklist), but "Implementation" means "the responsibility this file has" and "the public API it exposes" — not "the lines of code to write."
+
 Parameterize the incidentals: the subagent-spawning mechanism, the explorer/planner agent names, the skills-memory location, the async-notification tool, the downstream skill the finished plan gets handed to, and the plan-output directory (`.agents/plans/`).
 
 **Skill awareness — two passes.** The plan is informed by the project's existing skills, in two distinct passes. Both passes are gated: load the `hackery-file-management` skill first to learn the storage layout, dispatch index path, naming/index-sync conventions, and plan-home location. Read the dispatch index to enumerate available skills. **`hackery-file-management` is mandatory** — if it is unavailable, abort with an error. The skill is part of the project base and must always be present; its absence indicates a broken project state, not a fallback condition.
@@ -26,11 +39,11 @@ Parameterize the incidentals: the subagent-spawning mechanism, the explorer/plan
 
 **Stage 2: Make the plan**
 
-- Invoke the planner with the synthesized context (including discovered skills), the desired outcome, and the originating doc path if any. Instruct it to prioritize parallelism -- group independent steps into concurrently-implementable phases, fan-out/fan-in where dependencies force consolidation.
+- Invoke the planner with the synthesized context (including discovered skills), the desired outcome, and the originating doc path if any. Instruct it to prioritize parallelism -- group independent steps into concurrently-implementable phases, fan-out/fan-in where dependencies force consolidation. **Re-include the plan scope contract in the planner's brief** (see top of this file): what-and-why with research-anchored examples, never invented implementation code. The planner's first job is to describe intent; the implementer's job is to read code and write it.
 - When it returns, present the **full plan verbatim** (no summarizing), then ask one explicit question offering "looks good" vs. describe-changes.
-- **Refinement loop:** on requested changes, discuss, then re-invoke the planner with updated requirements _and the prior plan_ so it revises. Re-present in full, re-ask.
+- **Refinement loop:** on requested changes, discuss, then re-invoke the planner with updated requirements _and the prior plan_ so it revises. Re-present in full, re-ask. If the plan keeps drifting toward code-dictation, call it out and re-invoke with a sharper scope reminder.
 - The loop is **not eager** -- never push toward implementation. General praise does not count; exit only on explicit approval phrasing.
-- On approval, hand off: surface the finished plan, write it to `.agents/plans/<feature>.md` (project-root-relative, never under `packages/`), and point the user to the downstream implementation skill.
+- On approval, hand off: surface the finished plan, write it to `.agents/plans/<feature>.md` (project-root-relative, never under `packages/`), and point the user to the downstream implementation skill. **In the handoff, name the scope contract** so the implementer knows the plan is intent, not a script: "the plan describes what to build and why; you read the actual code and decide the implementation."
 
 ### Escalation
 
@@ -38,4 +51,4 @@ Stop and consult the user on: multiple iterations without resolution, an archite
 
 Close by having the skill acknowledge the task and enter Stage 1.
 
-Keep the effort tiers, the standing skills-memory question, the hard gate, and the explicit-approval condition concrete -- those are the spine, not decoration.
+Keep the effort tiers, the standing skills-memory question, the hard gate, and the explicit-approval condition concrete -- those are the spine, not decoration. The plan-scope contract (intent + research-anchored examples, not invented implementation) is also part of the spine.
