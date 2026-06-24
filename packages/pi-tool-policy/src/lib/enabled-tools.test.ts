@@ -1,6 +1,5 @@
-import { describe, expect, it } from "vitest"
-
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { describe, expect, it } from "vitest"
 
 import { applyEnabledOverrides } from "./enabled-tools.ts"
 import type { Config } from "./types.ts"

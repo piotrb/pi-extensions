@@ -1,6 +1,5 @@
-import { describe, expect, it, vi } from "vitest"
-
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolInfo } from "@earendil-works/pi-coding-agent"
+import { describe, expect, it, vi } from "vitest"
 
 import type { Config, ResolvedToolMetadata } from "../lib/types.ts"
 import toolPolicy, { extractStringFields } from "./tool-policy.ts"
@@ -160,7 +159,7 @@ describe("tool_call wiring of applyEnabledOverrides", () => {
   it("calls setActiveTools on session_start when config declares `enabled: false`", async () => {
     vi.resetModules()
     vi.doMock("../lib/permission-config.ts", () => ({
-      loadConfig: async () => ({
+      loadConfig: () => ({
         config: {
           modeOrder: ["test"],
           modes: { test: permissiveMode },
@@ -187,7 +186,7 @@ describe("tool_call wiring of applyEnabledOverrides", () => {
   it("does not call setActiveTools a second time on tool_call when config is unchanged (cache hit)", async () => {
     vi.resetModules()
     vi.doMock("../lib/permission-config.ts", () => ({
-      loadConfig: async () => ({
+      loadConfig: () => ({
         config: {
           modeOrder: ["test"],
           modes: { test: permissiveMode },
@@ -217,7 +216,7 @@ describe("tool_call wiring of applyEnabledOverrides", () => {
     let callIndex = 0
     vi.resetModules()
     vi.doMock("../lib/permission-config.ts", () => ({
-      loadConfig: async () => {
+      loadConfig: () => {
         callIndex++
         // First call: session_start with bash disabled.
         // Second call: tool_call with same config (cache hit, no new setActiveTools).
@@ -293,7 +292,7 @@ describe("tool_call wiring of applyEnabledOverrides", () => {
       computeExtendsChain: () => ["test"],
     }))
     vi.doMock("../lib/permission-config.ts", () => ({
-      loadConfig: async () => ({
+      loadConfig: () => ({
         config: {
           modeOrder: ["test"],
           modes: { test: permissiveMode, __yolo__: permissiveMode },
