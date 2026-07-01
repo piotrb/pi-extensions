@@ -44,7 +44,7 @@ const USER_PATH = () => join(homedir(), ".pi", "tool-policy.json")
  * `pi.toolMetadata` (see tool-metadata.ts).
  */
 export const STOCK_CONFIG: Config = {
-  modeOrder: ["readonly", "default", "edit", "plan"],
+  modeOrder: ["default", "readonly", "edit", "plan"],
   modes: {
     readonly: {
       description: "Read-only base; allows readonly and metadata, asks for everything else",

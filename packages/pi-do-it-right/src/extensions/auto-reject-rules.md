@@ -1,0 +1,21 @@
+- do not use `find` via `bash` to list files, use the specific `find` tool instead
+- Never use `ls {some path}` to list directory contents, use the specialized `ls` tool
+- Never use `grep` or `rg` to search file contents, use the specialized `grep` or `rg` tool
+- do not use `cat` to output files, use the built in `read` tool
+- do not use `sed` to make file edits, use the built in `edit` tool
+- do not use `awk` to edit or process file contents, use the built in `edit` tool
+- do not use `curl` or `wget` to fetch URLs, use the built in `WebFetch` tool
+- do not use `echo`, `printf`, or `touch` with shell redirects (>, >>) to write content to a file, use the built in `write` tool instead
+- do not use `mkdir` or `mkdir -p` to create directories before writing content with shell redirects — the `write` tool creates parent directories automatically (but `mkdir` is fine before legitimate file operations like `cp` or `mv`)
+- do not use `tee` to write output to a file, use the built in `write` tool instead
+- do not pipe output to `less` or `more` — they hang waiting for input in the Bash tool
+- avoid using `tail` and `head` commands with lint/test commands. This just hides potentially useful output.
+- do not use stderr redirects, the `bash`` tool can handle stderr just fine
+- do not append `; echo "EXIT: $?"` or `&& echo $?` or similar exit code checks after commands — the `bash`` tool already surfaces exit codes and failures natively
+- do not chain independent commands using `&&`, `;`, or `|` when each part could instead be a separate tool call — for example, `ls dir1 && ls dir2` should be two `ls` calls, and `cat file1 && cat file2` should be two `read` calls; compound commands are fine when the result of one feeds the next (e.g. `cd foo && make`); decorative separators like `echo "---"` between chained commands are a sign the commands should be separate tool calls instead
+- do not use `git stash` to temporarily hide changes in order to test or check a baseline state — if there are errors, they should be fixed directly; stashing and popping around checks is dangerous and masks the real problem
+- do not scrape git output using `grep`, `sed`, or `awk` pipelines to extract information — use git's built-in plumbing commands instead (e.g. `git rev-parse --abbrev-ref HEAD` for the current branch, `git symbolic-ref refs/remotes/origin/HEAD --short` for the default remote branch, `git log --format=...` for structured log output)
+- do not use `cd` to the project root infront of commands, just run them directly.
+- avoid fetching git content from third party git repos using the `gh api` command, eg: `gh api repos/blackboardsh/electrobun/contents/templates/react-tailwind-vite/src/mainview/main.tsx --jq '.content' | base64 -d`. Instead clone this repo to a temporary folder, and then use regular read commands.
+- avoid using `|| true` on commands, the `bash` tool handles exit codes just fine and the signal that the command failed is likely important
+

@@ -105,12 +105,14 @@ describe("loadConfig", () => {
     expect(config.modes.plan?.extends).toBeUndefined()
   })
 
-  it("orders stock modes as readonly, default, edit, plan in modeOrder", async () => {
+  it("orders stock modes as default, readonly, edit, plan in modeOrder", async () => {
     const { config } = await loadConfig(tmpCwd)
-    // The stock order is the most-permissive mode first, narrowing
-    // toward plan mode (the most restrictive). YOLO is appended
-    // automatically; we test the prefix.
-    expect(config.modeOrder.slice(0, 4)).toEqual(["readonly", "default", "edit", "plan"])
+    // The first mode in modeOrder is the default starting mode — `default`
+    // is the everyday mode, so it lands at position 0. The cycle order
+    // walks strictly toward more permissive (`readonly` strips ask-on-write)
+    // and then to `edit` (write allowed) and `plan` (all deny). YOLO is
+    // appended automatically; we test the prefix.
+    expect(config.modeOrder.slice(0, 4)).toEqual(["default", "readonly", "edit", "plan"])
   })
 
   it("is idempotent (two consecutive calls return equivalent results)", async () => {

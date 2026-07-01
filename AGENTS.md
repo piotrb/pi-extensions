@@ -92,8 +92,6 @@ Each `packages/<name>/` is its own npm package with its own `package.json`, `tsc
 
 These are derived from repeated cross-session corrections. Read this section before calling the `run` tool or any filesystem mutation.
 
-- **Use `run`, not bash.** All project commands go through the `run` tool (and filesystem ops through `pfs_*`). Do not use `bash`, `rm`, `mv`, `cp`, or `mkdir` for project files. If a tool is unavailable, stop and ask the user — do not workaround.
-- **`run` cmd is a JSON array of args, not a shell string.** Pass `["pnpm", "install"]`, not `"pnpm install"`. Never quote args, never pass absolute paths to commands, never use shell interpolation. If a launcher is allowed, the args are the exact argv.
 - **Full workspace check is the default.** Use `pnpm run check` for end-to-end validation (format + lint + typecheck + test). Do not filter to a single package unless explicitly iterating on that package — the scoped filter (`pnpm turbo run typecheck test --filter=<pkg>`) is for single-package iteration, not for "skipping parts of the check". The full check must cover all four layers.
 - **`pnpm run check` needs a higher timeout.** The default 30s is shorter than a cold full-workspace run. Pass an explicit timeout whenever invoking it.
 - **Pre-existing failures are not out of scope.** If `pnpm run check` fails on a file you did not touch, fix it as part of the same change. Do not assume pre-existing issues are someone else's problem.
