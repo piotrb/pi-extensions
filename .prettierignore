@@ -1,3 +1,4 @@
 .pi/pi-task-list
+.context/
 pnpm-lock.yaml
 .turbo/
