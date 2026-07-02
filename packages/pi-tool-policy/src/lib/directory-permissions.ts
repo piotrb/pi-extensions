@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises"
-import { dirname, isAbsolute, relative, resolve } from "node:path"
+import { dirname, isAbsolute, resolve } from "node:path"
 
+import { isInsidePath } from "./is-path-allowed.ts"
 import type { AllowedPath } from "./types.ts"
 
 interface Grant {
@@ -35,12 +36,6 @@ export interface DirectoryGrantSnapshot {
 export class DirectoryPermissionsState {
   private store = new Map<string, Grant>()
 
-  /** True if `absPath` is contained in `grantPath` (lexical containment, no realpath). */
-  private static isInside(absPath: string, grantPath: string): boolean {
-    const rel = relative(grantPath, absPath)
-    return !rel.startsWith("..") && !isAbsolute(rel)
-  }
-
   /** Public: check whether a path is already in the grant store. */
   has(path: string): boolean {
     return this.store.has(path)
@@ -56,7 +51,7 @@ export class DirectoryPermissionsState {
   /** True if any grant covers (absPath, effectiveTags). */
   matches(absPath: string, effectiveTags: string[]): boolean {
     for (const grant of this.store.values()) {
-      if (DirectoryPermissionsState.isInside(absPath, grant.path)) {
+      if (isInsidePath(absPath, grant.path)) {
         if (grant.tags.length === 0) return true
         if (grant.tags.every((t) => effectiveTags.includes(t))) return true
       }
@@ -72,7 +67,7 @@ export class DirectoryPermissionsState {
     const coveredTags = new Set<string>()
     let anyGrantCovers = false
     for (const grant of this.store.values()) {
-      if (!DirectoryPermissionsState.isInside(absPath, grant.path)) continue
+      if (!isInsidePath(absPath, grant.path)) continue
       anyGrantCovers = true
       if (grant.tags.length === 0) {
         // allowAny: covers all tags.
