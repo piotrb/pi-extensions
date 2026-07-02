@@ -44,7 +44,7 @@ A pi extension that gates `tool_call` events against a mode-based permission pol
 - **Tags match by exact set membership** — no globs for tags. Globs are only for the `tool` field in tagger rules.
 - **Directory grants are session-scoped** — the CWD auto-grant is the only persistent grant. After session end, all grants reset.
 - **Deny is non-persistent** — the directory-permissions modal does not record denials; the next request for the same path asks again.
-- **YOLO mode is an emergency escape** — see `YOLO_MODE` in `src/lib/types.ts`. It is **not user-configurable**; it lives in code as a synthetic mode that bypasses all checks. Use it only when a `pi-tool-policy` bug is blocking the agent.
+- **YOLO mode is an emergency escape** — see `YOLO_MODE` in `src/lib/types.ts`. It is **not user-configurable**; it is a stock mode (`__yolo__` is the last entry of `STOCK_CONFIG.modeOrder`) that bypasses all checks at the runtime gate. Use it only when a `pi-tool-policy` bug is blocking the agent.
 
 ## Module structure
 
@@ -110,7 +110,7 @@ The package has a `src/lib/` sub-tree (like `pi-task-runner`) and a nested `src/
 - **Do not promote `undecided` to a deny at the matcher level.** The combine is `deny > ask > allow`; `undecided` collapses to `ask` (fail-closed at the next layer). The user gets a prompt, not a silent block.
 - **Do not add globs to tag matching.** Tags match by exact set membership. Globs are only for the `tool` field in tagger rules.
 - **Do not persist `deny` verdicts across sessions.** The directory-permissions modal does not record denials. The next request for the same path asks again.
-- **Do not make `YOLO_MODE` user-configurable.** It is a code-level emergency escape. User configuration would defeat the purpose.
+- **Do not make `YOLO_MODE` user-configurable.** It is a code-level emergency escape (a stock mode), not a user config option. User configuration would defeat the purpose.
 - **When adding a new mode**: add to `STOCK_CONFIG` in `src/lib/permission-config.ts` or to the user's `~/.pi/tool-policy.json`; update the JSON Schema; add tests for `defaultDecision`, `tagRules`, `toolRules`, `aspectRules`; run typecheck+test.
 - **When adding a new aspect kind** (path/url/bash/glob/regex): add to the `matchAspect` dispatch in `src/lib/aspects.ts`; update the JSON Schema's `aspect` enum; add unit tests in `aspects.test.ts`.
 - **The mode controller, the matcher, and the aspect kinds are deep** — see `pi-tool-policy-mode-controller` (the area skill) for the details.

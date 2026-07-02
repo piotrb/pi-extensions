@@ -4,7 +4,7 @@ import { join, resolve } from "node:path"
 
 import type { ConfigLayers } from "./modal/debug-modal.ts"
 import { deepMergeToolMetadata } from "./tool-metadata.ts"
-import { type AllowedPath, type Config, type Mode, type ToolMetadata, YOLO_MODE } from "./types.ts"
+import { type AllowedPath, type Config, type Mode, type ToolMetadata } from "./types.ts"
 
 const PROJECT_PATH = (cwd: string) => join(cwd, ".pi", "tool-policy.json")
 const USER_PATH = () => join(homedir(), ".pi", "tool-policy.json")
@@ -44,7 +44,7 @@ const USER_PATH = () => join(homedir(), ".pi", "tool-policy.json")
  * `pi.toolMetadata` (see tool-metadata.ts).
  */
 export const STOCK_CONFIG: Config = {
-  modeOrder: ["default", "readonly", "edit", "plan"],
+  modeOrder: ["default", "readonly", "edit", "plan", "__yolo__"],
   modes: {
     readonly: {
       description: "Read-only base; allows readonly and metadata, asks for everything else",
@@ -93,6 +93,19 @@ export const STOCK_CONFIG: Config = {
         mode: "replace",
         text: "You are in plan mode. You may not modify files, run commands, or take any side-effecting action. Generate a plan and present it to the user; do not execute it.",
       },
+    },
+    // Emergency-off "YOLO" mode. Listed last in STOCK_CONFIG.modeOrder so
+    // the cycle wraps to it as a last resort. The `tool_call` handler
+    // short-circuits BEFORE the matcher when the active mode is YOLO,
+    // so the policy engine is fully disabled. Field overrides on YOLO
+    // (e.g. from a user's config) are silently merged but never read at
+    // runtime — the gate returns `undefined` early.
+    __yolo__: {
+      description: "EMERGENCY OFF — extension disabled, all tool calls pass through",
+      defaultDecision: "allow",
+      tagRules: {},
+      toolRules: {},
+      aspectRules: {},
     },
   },
   allowedPaths: [],
@@ -327,8 +340,17 @@ export async function loadConfig(cwd: string): Promise<LoadedConfig> {
   // tool. Without this, a partial override would produce a mode with
   // `tagRules: undefined`, which crashes the policy matcher the first
   // time a tool with the `readonly` tag is invoked.
+  //
+  // modeOrder uses a stock-first merge: stock provides the canonical
+  // order (with YOLO as the last entry so the cycle wraps to it as a
+  // last resort); user/project entries not already in stock are
+  // appended in user-before-project order, deduped. The user can add
+  // new modes to the cycle but cannot reorder stock modes.
+  const stockOrder = STOCK_CONFIG.modeOrder
+  const userProject = [...(user.modeOrder ?? []), ...(project.modeOrder ?? [])]
+  const additions = userProject.filter((name, i, arr) => !stockOrder.includes(name) && arr.indexOf(name) === i)
   const merged: Config = {
-    modeOrder: project.modeOrder ?? user.modeOrder ?? STOCK_CONFIG.modeOrder,
+    modeOrder: [...stockOrder, ...additions],
     modes: mergeModes(mergeModes(STOCK_CONFIG.modes, user.modes ?? {}), project.modes ?? {}),
     allowedPaths: [...STOCK_CONFIG.allowedPaths, ...(user.allowedPaths ?? []), ...(project.allowedPaths ?? [])],
     taggingRules: [...STOCK_CONFIG.taggingRules, ...(user.taggingRules ?? []), ...(project.taggingRules ?? [])],
@@ -336,20 +358,6 @@ export async function loadConfig(cwd: string): Promise<LoadedConfig> {
       mergeToolMetadata(STOCK_CONFIG.toolMetadata, user.toolMetadata ?? {}),
       project.toolMetadata ?? {},
     ),
-  }
-
-  // Inject the emergency-off "YOLO" mode. Synthetic, not user-configurable,
-  // listed last so the cycle wraps to it as a last resort. The user can
-  // reach it via the cycle hotkey or /tool_policy.
-  merged.modes[YOLO_MODE] = {
-    description: "EMERGENCY OFF — extension disabled, all tool calls pass through",
-    defaultDecision: "allow",
-    tagRules: {},
-    toolRules: {},
-    aspectRules: {},
-  }
-  if (!merged.modeOrder.includes(YOLO_MODE)) {
-    merged.modeOrder = [...merged.modeOrder, YOLO_MODE]
   }
 
   const warnings: string[] = []

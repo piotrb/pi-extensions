@@ -105,14 +105,16 @@ describe("loadConfig", () => {
     expect(config.modes.plan?.extends).toBeUndefined()
   })
 
-  it("orders stock modes as default, readonly, edit, plan in modeOrder", async () => {
+  it("orders stock modes as default, readonly, edit, plan, __yolo__ in modeOrder", async () => {
     const { config } = await loadConfig(tmpCwd)
     // The first mode in modeOrder is the default starting mode — `default`
     // is the everyday mode, so it lands at position 0. The cycle order
     // walks strictly toward more permissive (`readonly` strips ask-on-write)
     // and then to `edit` (write allowed) and `plan` (all deny). YOLO is
-    // appended automatically; we test the prefix.
-    expect(config.modeOrder.slice(0, 4)).toEqual(["default", "readonly", "edit", "plan"])
+    // a stock mode too, listed last so the cycle wraps to it as a last
+    // resort. With YOLO now in stock, the stock-prefix order covers the
+    // whole modeOrder when the user provides no override.
+    expect(config.modeOrder.slice(0, 5)).toEqual(["default", "readonly", "edit", "plan", "__yolo__"])
   })
 
   it("is idempotent (two consecutive calls return equivalent results)", async () => {
@@ -122,10 +124,14 @@ describe("loadConfig", () => {
     expect(a.sources).toEqual(b.sources)
   })
 
-  it("injects the YOLO (emergency-off) mode on every load, even with stock defaults", async () => {
+  it("includes YOLO as a stock mode (YOLO is part of STOCK_CONFIG)", async () => {
+    // YOLO is now a stock mode — not a synthetic post-merge injection.
+    // Its presence in the merged config is a property of the stock base,
+    // not of the loader's runtime behavior.
+    expect(STOCK_CONFIG.modes).toHaveProperty(YOLO_MODE)
+    expect(STOCK_CONFIG.modeOrder).toContain(YOLO_MODE)
     const { config } = await loadConfig(tmpCwd)
     expect(config.modes).toHaveProperty(YOLO_MODE)
-    expect(config.modeOrder).toContain(YOLO_MODE)
     // The YOLO mode must be the LAST entry in modeOrder so the cycle wraps
     // to it as a last resort. Users normally don't see it.
     expect(config.modeOrder[config.modeOrder.length - 1]).toBe(YOLO_MODE)
@@ -134,7 +140,9 @@ describe("loadConfig", () => {
     expect(config.modes[YOLO_MODE]?.defaultDecision).toBe("allow")
   })
 
-  it("does not duplicate the YOLO mode in modeOrder if it was already added by the user", async () => {
+  it("does not duplicate the YOLO mode in modeOrder if the user lists it too", async () => {
+    // YOLO is a stock mode. If the user lists `__yolo__` in their
+    // modeOrder, the stock-first merge dedupes it (it's already in stock).
     await mkdir(join(tmpCwd, ".pi"), { recursive: true })
     await writeFile(
       join(tmpCwd, ".pi", "tool-policy.json"),
@@ -150,8 +158,11 @@ describe("loadConfig", () => {
     await mkdir(join(tmpCwd, ".pi"), { recursive: true })
     await writeFile(join(tmpCwd, ".pi", "tool-policy.json"), JSON.stringify({ modeOrder: ["only-mode"] }))
     const after = await loadConfig(tmpCwd)
-    // The user-supplied modeOrder wins; the YOLO mode is appended automatically.
-    expect(after.config.modeOrder).toEqual(["only-mode", "__yolo__"])
+    // modeOrder is now stock-first: stock provides the canonical order,
+    // user/project entries not already in stock are appended (deduped,
+    // user-before-project). The user's "only-mode" is new (not in stock),
+    // so it's appended after the stock prefix.
+    expect(after.config.modeOrder).toEqual(["default", "readonly", "edit", "plan", "__yolo__", "only-mode"])
     expect(after.config.modeOrder).not.toEqual(before.config.modeOrder)
   })
 
@@ -160,8 +171,9 @@ describe("loadConfig", () => {
     await writeFile(join(tmpCwd, ".pi", "tool-policy.json"), "{not valid json")
     const { config, sources, warnings } = await loadConfig(tmpCwd)
     expect(sources.project).toBe(false)
-    // Stock modeOrder is the prefix; the YOLO mode is appended on every load.
-    expect(config.modeOrder).toEqual([...STOCK_CONFIG.modeOrder, "__yolo__"])
+    // Stock modeOrder is the canonical prefix; with YOLO in stock, the
+    // modeOrder IS STOCK_CONFIG.modeOrder (no separate YOLO append anymore).
+    expect(config.modeOrder).toEqual(STOCK_CONFIG.modeOrder)
     // No warning is emitted for a parse error — silent fall-through per v1 contract.
     expect(warnings).toEqual([])
   })
