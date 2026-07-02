@@ -181,7 +181,12 @@ export function evaluate(
         if (isArrayBinding(binding)) {
           // Array-mode binding: iterate per element and combine.
           if (!Array.isArray(value)) continue
-          const result = matchAspectEach(aspectName, value as string[], aspectRule, ctx.cwd)
+          // Dispatch on `decl.mode` (one of the 5 base modes), not the
+          // user-defined `aspectName`. The user-defined name (e.g. "source"
+          // for git_mv's `source` aspect) may not be one of the base modes;
+          // the base mode (e.g. "path") identifies the matcher semantics
+          // (picomatch vs url-host vs basename-glob vs regex vs bash-word).
+          const result = matchAspectEach(decl.mode, value as string[], aspectRule, ctx.cwd)
           if (result === "undecided") continue
           contribute("aspect", field, result.verdict, { aspect: aspectName, pattern: result.pattern })
           continue
@@ -189,7 +194,9 @@ export function evaluate(
 
         const s = coerceForMatch(value)
         if (!s) continue
-        const result = matchAspect(aspectName, s, aspectRule, ctx.cwd)
+        // See comment above — dispatch on the base mode, not the
+        // user-defined aspect name. This is the dispatch-key fix.
+        const result = matchAspect(decl.mode, s, aspectRule, ctx.cwd)
         if (result === "undecided") continue
         contribute("aspect", field, result.verdict, { aspect: aspectName, pattern: result.pattern })
       }

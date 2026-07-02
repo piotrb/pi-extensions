@@ -140,23 +140,23 @@ The `FieldBinding` refactor also touched (verify each when changing the shape):
 - **Per-field cardinality is the right abstraction.** A single aspect that carries fields of mixed cardinality (e.g. scalar `cwd` + array `paths`) used to force an all-or-nothing choice. The per-field `FieldBinding` removes the choice and makes the matcher's behavior more predictable.
 - **The helpers `isArrayBinding` and `fieldName` are the entry points.** The v1 helpers `isArrayMode` and `baseMode` are gone. Code that references v1 helpers needs to migrate.
 - **The dispatch loop is per-binding, not per-aspect.** Each binding contributes one rule to the running fold. Most-restrictive wins across all bindings on the aspect. The fold is the load-bearing part.
-- **The mixed-cardinality test pattern is the regression contract.** The three test cases (scalar + array, multi-aspect, most-restrictive-wins) cover the behavior changes from the refactor. Future changes to the dispatcher must keep all three green.
-- **The dispatch-key gotcha is a known latent bug.** The fix is two line changes (`policy.ts:144`, `coverage.ts:64`) plus a regression test that pins the dispatch key to `decl.mode`. Until the fix lands, the test suite uses patterns that match in both code paths and the bug stays hidden.
+- **The mixed-cardinality test pattern is the regression contract.** The four test cases (scalar + array, multi-aspect, most-restrictive-wins, brace-expansion dispatch-key) cover the behavior changes from the refactor. Future changes to the dispatcher must keep all four green.
+- **The dispatch-key contract is pinned by the brace-expansion regression test.** The matcher dispatches on `decl.mode`, not the user-defined aspect name. The test (`**/{node_modules,.git}/**` bound to a `source` aspect of `mode: "path"`) flips to failing if the dispatch key reverts to `aspectName`.
 
 # Prevention
 
 - **Do not reference v1 types.** The `mode: "X[]"` suffix, the `isArrayMode` / `baseMode` helpers, and the `coerceForMatch(value, aspectName)` signature are all v1. The v2 contract is the only contract.
 - **Do not iterate `decl.fields` as a single `string[]`.** The new shape is `FieldBinding[]`, not `string[]`. Use `fieldName(binding)` to extract the field name from each binding.
 - **Do not check `Array.isArray(value)` on the wrong side of the loop.** The array-vs-scalar check is per-binding (`isArrayBinding(binding)`), not per-value. The matcher decides per-binding which value shape to expect.
-- **Do not use the user-defined aspect name as the dispatch key.** The `matchAspect` `name` parameter should be `AspectDeclaration.mode` (one of the 5 base modes), not the user-defined aspect name from `Object.entries(meta.fields)`. Using the user-defined name falls through to the generic-regex branch for any non-base-mode name. (This is also the dispatch-key gotcha above; it's both a Prevention rule and a known latent bug.)
+- **Do not use the user-defined aspect name as the dispatch key.** The `matchAspect` `name` parameter should be `AspectDeclaration.mode` (one of the 5 base modes), not the user-defined aspect name from `Object.entries(meta.fields)`. Using the user-defined name falls through to the generic-regex branch for any non-base-mode name. The brace-expansion regression test pins this contract.
 - **Do not add `path[]` (or any `[]`) to the JSON Schema enum.** The `mode` enum is the 5-value `BaseAspectMode`. The `[]` suffix is gone.
 - **Do not add a normalizer to the orphan check.** Pre-refactor, the orphan check normalized `path[]` → `path` to bridge between the v1 suffix and the aspect name. Post-refactor, the suffix is gone, so the normalization is no-op noise.
-- **Do not write a mixed-cardinality test that pins the dispatch key to `aspectName`.** Such a test would mask the dispatch-key gotcha. Pin to `decl.mode` (or use a pattern that fails in the fallback path).
-- **Do not skip the multi-aspect test case.** The `git_mv` shape (separate `source` and `destination` aspects) is the case where `aspectName !== decl.mode`. The test catches the dispatch-key gotcha.
+- **Do not write a mixed-cardinality test that pins the dispatch key to `aspectName`.** Such a test would mask the dispatch-key contract. Pin to `decl.mode` (or use a pattern that fails in the fallback path, like `**/{node_modules,.git}/**`).
+- **Do not skip the multi-aspect test case.** The `git_mv` shape (separate `source` and `destination` aspects) is the case where `aspectName !== decl.mode`. The brace-expansion regression test catches a dispatch-key regression.
 
 # Known issues
 
-- **The dispatch-key gotcha is a latent bug.** The current working tree passes `aspectName` to `matchAspect` / `matchAspectEach` in `policy.ts:144` and `coverage.ts:64`. The fix is to pass `decl.mode` instead. The bug is masked by the existing test suite (which uses patterns that match in both code paths). A follow-up commit must change the two call sites and add a regression test that pins the dispatch key to `decl.mode` (use a pattern like `**/node_modules/**` that only matches in the picomatch branch).
+_None. The dispatch-key fix has landed in `policy.ts:184,192` and `coverage.ts:64,72`; the brace-expansion regression test pins the contract._
 
 # Related
 

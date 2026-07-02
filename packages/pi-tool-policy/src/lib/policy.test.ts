@@ -802,6 +802,44 @@ describe("per-field aspect cardinality (FieldBinding)", () => {
     expect(gitMv.action).toBe("deny")
   })
 
+  it("dispatches aspect rules to picomatch when aspectName !== 'path' (regression for the dispatch-key gotcha)", () => {
+    // git_mv-shaped tool: custom aspect name "source" bound to mode: "path".
+    // The bug would dispatch on the user-defined name ("source"), not the
+    // declared mode ("path"), so the generic-regex fallback would fire.
+    // The brace-expansion pattern `**/{node_modules,.git}/**` distinguishes
+    // the two branches: picomatch expands braces (matches), generic-regex
+    // does not (does not match).
+    const source: AspectRule = { patterns: { "**/{node_modules,.git}/**": "deny" } }
+    const meta: ResolvedToolMetadata = {
+      tags: ["mutating"],
+      fields: {
+        source: { mode: "path", fields: [{ field: "source", mode: "array" }] },
+      },
+    }
+    const decision = runInMode(
+      "git_mv",
+      { source: ["/repo/node_modules/foo"] },
+      {
+        description: "test",
+        defaultDecision: "allow",
+        tagRules: {},
+        toolRules: {},
+        aspectRules: { source },
+      },
+      [],
+      new Map([["git_mv", meta]]),
+    )
+    // With the fix: picomatch expands the braces and matches
+    // /repo/node_modules/foo (relative to /repo → node_modules/foo,
+    // which the brace pattern covers) → rule fires → deny.
+    // Without the fix: the fallback can't expand braces, the rule
+    // doesn't fire, defaultDecision ("allow") wins → action would
+    // be "allow" and this test would fail.
+    expect(decision.action).toBe("deny")
+    const aspectRules = decision.ruleTrail.filter((r) => r.layer === "aspect")
+    expect(aspectRules).toEqual([expect.objectContaining({ verdict: "deny", pattern: "**/{node_modules,.git}/**" })])
+  })
+
   it("mixed scalar + array on the same aspect: both bindings contribute, most-restrictive wins", () => {
     // Both fields bind to the same `path` aspect. `cwd` is scalar
     // (matched as one), `paths` is array (matched per element). The

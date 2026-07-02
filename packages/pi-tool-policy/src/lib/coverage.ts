@@ -63,13 +63,16 @@ function isAspectCovered(
       if (value === undefined || value === null) continue
       if (isArrayBinding(binding)) {
         if (!Array.isArray(value)) continue
-        const result = matchAspectEach(aspectName, value as string[], aspectRule, cwd)
+        // Dispatch on `decl.mode` (base mode), not the user-defined
+        // `aspectName`. Mirrors the matcher fix in policy.ts:184/192.
+        const result = matchAspectEach(decl.mode, value as string[], aspectRule, cwd)
         if (result !== "undecided" && result.verdict === "allow") return true
         continue
       }
       const s = coerceForMatch(value)
       if (!s) continue
-      const result = matchAspect(aspectName, s, aspectRule, cwd)
+      // See comment above — dispatch on the base mode.
+      const result = matchAspect(decl.mode, s, aspectRule, cwd)
       if (result !== "undecided" && result.verdict === "allow") return true
     }
   }
