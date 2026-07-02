@@ -96,7 +96,18 @@ export const STOCK_CONFIG: Config = {
     },
   },
   allowedPaths: [],
-  taggingRules: [],
+  taggingRules: [
+    {
+      tool: "bash",
+      fields: { command: ["wc *", "ls", "ls *"] },
+      action: { type: "addTags", tags: ["readonly"] },
+    },
+    {
+      tool: "bash",
+      fields: { command: ["mkdir *", "rmdir *", "rm *"] },
+      action: { type: "addTags", tags: ["mutating"] },
+    },
+  ],
   toolMetadata: {
     read: { tags: ["readonly"], aspects: { path: { mode: "path", fields: ["path"] } } },
     write: { tags: ["mutating"], aspects: { path: { mode: "path", fields: ["path"] } } },

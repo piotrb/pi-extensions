@@ -1,3 +1,4 @@
 - Never run random scripts via `node -e "{script here}"`. This is a security issue and usually very hard for the user to be able to sanely approve. Prefer running known scripts via `pnpm run`. If you need to "spike" on something, you must pause, present a spike plan to the user and have them either approve or modify it before proceeding. If you need to explore some potential solutions via code, you probably want to suggest writing a little spike script file that is trying to test specific things. All must be part of the plan.
 - Never run `pnpm exec`. There is probably a script you should run instead via `pnpm run {script name}`
 - Never follow the pattern of "cd into folder and then run a pnpm command". eg: `cd some/path && pnpm {some sub-command}`. You should prefer the `pnpm --filter {package name} run {command}` syntax
+- Never run `pnpm install`, `pnpm uninstall`. You must ask the user to do package management operations.

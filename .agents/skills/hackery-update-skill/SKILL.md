@@ -1,6 +1,6 @@
 ---
 name: hackery-update-skill
-description: update one of the skills
+description: Manages the published skills inside the pi-hackery package (packages/pi-hackery/skills/). Given a target skill name, reads the corresponding base under packages/pi-hackery/bases/skills/, then creates or updates the published snapshot at packages/pi-hackery/skills/<name>/SKILL.md to match the base. Enforces frontmatter rules (matching name, no colons in description) and surfaces a change list for explicit user approval before editing. Use when the user asks to update or create a skill whose destination is in packages/pi-hackery/skills/.
 ---
 
 This skill manages skills inside the pi-hackery package in packages/pi-hackery

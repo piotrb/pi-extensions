@@ -13,9 +13,11 @@
 - do not use stderr redirects, the `bash`` tool can handle stderr just fine
 - do not append `; echo "EXIT: $?"` or `&& echo $?` or similar exit code checks after commands — the `bash`` tool already surfaces exit codes and failures natively
 - do not chain independent commands using `&&`, `;`, or `|` when each part could instead be a separate tool call — for example, `ls dir1 && ls dir2` should be two `ls` calls, and `cat file1 && cat file2` should be two `read` calls; compound commands are fine when the result of one feeds the next (e.g. `cd foo && make`); decorative separators like `echo "---"` between chained commands are a sign the commands should be separate tool calls instead
+- do not chain even loosely related commands, eg: `rm {some path}/{some file} && rmdir {some path}`. These should happen as independent not chained commands.
 - do not use `git stash` to temporarily hide changes in order to test or check a baseline state — if there are errors, they should be fixed directly; stashing and popping around checks is dangerous and masks the real problem
 - do not scrape git output using `grep`, `sed`, or `awk` pipelines to extract information — use git's built-in plumbing commands instead (e.g. `git rev-parse --abbrev-ref HEAD` for the current branch, `git symbolic-ref refs/remotes/origin/HEAD --short` for the default remote branch, `git log --format=...` for structured log output)
 - do not use `cd` to the project root infront of commands, just run them directly.
 - avoid fetching git content from third party git repos using the `gh api` command, eg: `gh api repos/blackboardsh/electrobun/contents/templates/react-tailwind-vite/src/mainview/main.tsx --jq '.content' | base64 -d`. Instead clone this repo to a temporary folder, and then use regular read commands.
 - avoid using `|| true` on commands, the `bash` tool handles exit codes just fine and the signal that the command failed is likely important
-
+- do not run complex scripts via `bash -c`, `python -c`, `node -e` or similar mechanisms. You should break down the workflow into smaller individual tool calls. You should never use one of scripts like this for edits. If you're trying to use this as a test of some sort, consider if it wouldn't make sense instead to add it as an actual test in the package's testing framework so its reuseable instead.
+- do not use `test -d {some path}` to test for the existence of directories. Just use the `ls` tool and you will know if it exists or not.

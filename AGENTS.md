@@ -85,7 +85,6 @@ Each `packages/<name>/` is its own npm package with its own `package.json`, `tsc
 - **Module style**: ESM only (`"type": "module"`). NodeNext module resolution — local imports keep `.ts` extensions (pi's runtime handles them via jiti).
 - **Shared tsconfig**: each package's `tsconfig.json` extends `../../tsconfig.base.json` with `"include": ["src/**/*"]`. Do not duplicate compilerOptions.
 - **File operations**: prefer `pfs_mv`, `pfs_cp`, `pfs_unlink`, `pfs_rmdir` for filesystem moves/deletes. Use `git_mv` only when you explicitly need git to track the rename in the index.
-- **Skills**: any change to a learning under `.agents/skills/` MUST keep `.agents/learning-index.md` in sync. The `hackery-file-management` skill owns the storage layout, dispatch index, and index-sync procedure.
 - **Tests assert behavior, not data, and do not duplicate the producer.** When lifting a function to a shared lib (`pi-extension-utils`, etc.), delete the duplicate tests in the consumer — the lib's own tests cover the lifted function. The consumer's test file covers only consumer-specific surface (how it composes the lib, its own config schema, the rules it derives). A test that compares an object to a hardcoded literal of itself is documentation, not verification; if it would still pass with `() => undefined` swapped in, remove or rewrite it. Loader/merger tests exercise the loader/merger logic, not the data shape it returns.
 
 ### Tool surface rules
@@ -126,11 +125,11 @@ pnpm --filter <pkg> run test             # single-package test
 
 **Core (always loaded):**
 
-@.agents/learning-index.md
+@docs/solutions/architecture/pi-package-specific-skill-naming.md
 
 **Secondary (load when relevant):**
 
-- Skills are dispatched by description from `.agents/learning-index.md`. The index lists every learning with a one-paragraph routing description; load on demand with the `read` tool.
+- Solutions are discovered at lookup time by grep on the frontmatter fields (`tags`, `title`, `applies_when`) per the `05-learn` workflow. The naming convention for package-specific solutions is in the core reference above.
 
 ## Emergency escape: `__yolo__` mode in `pi-tool-policy`
 

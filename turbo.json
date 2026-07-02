@@ -15,6 +15,10 @@
       "cache": true,
       "inputs": ["**/*.{ts,js,mjs,cjs,jsx,tsx}", "eslint.config.*", "eslint.config.mjs", ".eslintignore"]
     },
+    "//#test:workspace": {
+      "cache": true,
+      "inputs": ["tests/**", "tsconfig.json", "tsconfig.base.json", "package.json"]
+    },
     "typecheck": {
       "dependsOn": [],
       "cache": true,

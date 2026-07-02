@@ -1,15 +1,6 @@
 {
   "modes": {
     "readonly": {
-      "aspectRules": {
-        "bash_cmd": {
-          "patterns": {
-            "ls *": "allow",
-            "grep *": "allow",
-            "find *": "allow"
-          }
-        }
-      },
       "toolRules": {
         "context_tag": [
           {
@@ -32,11 +23,11 @@
       "aspectRules": {
         "bash_cmd": {
           "patterns": {
-            "pnpm *": "allow"
+            "pnpm *": "allow",
+            "wc *": "allow"
           }
         }
       }
-    },
-    "edit": {}
+    }
   }
 }
