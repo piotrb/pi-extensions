@@ -8,7 +8,10 @@
  *   - Model configured via `~/.pi/agent/auto-reject-rules.json`
  *     (falls back to anthropic/claude-haiku-4-5). See `settings.ts`.
  *   - Filter: only `event.toolName === "bash"` is checked.
- *   - On violation: return { block: true, reason: <llm reason> + suffix }.
+ *   - On violation: return { block: true, reason: <llm reason> }. The
+ *     reason follows a two-section shape (Violated rules with quoted
+ *     fragments + Suggested fix). The status bar shows the first line;
+ *     the full reason flows to the block message.
  *   - On any error path: return undefined (strict fail-open).
  *
  * User controls:
@@ -141,7 +144,11 @@ export default function (pi: ExtensionAPI): void {
       return undefined
     }
     blocked(command, result.reason)
-    ctx.ui.setStatus(STATUS_KEY, `gate: ${model.provider}/${model.id} — block: ${result.reason}`)
+    // The status bar is single-line. The block reason now spans two
+    // sections (Violated rules + Suggested fix) and can be many lines
+    // long; collapsing it to the first line keeps the status bar
+    // readable while still telling the user WHY the gate tripped.
+    ctx.ui.setStatus(STATUS_KEY, `gate: ${model.provider}/${model.id} — block: ${firstLine(result.reason)}`)
     setTimeout(() => {
       refreshStatusBar(ctx, cached)
     }, 4000)
@@ -634,7 +641,20 @@ async function runTestEvaluation(ctx: ExtensionCommandContext, cached: CachedSta
     if (thinkingBuffer || completedThinking) {
       lines.push(`[thinking] ${truncate(thinkingBuffer || completedThinking)}`)
     }
-    if (textBuffer) lines.push(textBuffer)
+    // The model streams text as a single string with embedded newlines.
+    // Split on every newline so each line becomes its own widget entry
+    // — otherwise the verdict (which is two sections separated by blank
+    // lines) would render as one mangled block in the widget.
+    if (textBuffer) {
+      const buffered = textBuffer.split("\n")
+      for (const line of buffered) {
+        // `split` yields an empty trailing entry when the buffer ends
+        // with a newline; drop it so the widget doesn't grow a stray
+        // blank line on every render.
+        if (line.length === 0 && buffered[buffered.length - 1] === line) continue
+        lines.push(line)
+      }
+    }
     ctx.ui.setWidget(WIDGET_KEY, lines)
   }
   render()
@@ -684,9 +704,13 @@ async function runTestEvaluation(ctx: ExtensionCommandContext, cached: CachedSta
 
   // Show the verdict in the widget for a beat, then drop it. A notify
   // carries the short form; the widget was for live observation.
-  textBuffer =
-    (textBuffer ? textBuffer + "\n\n" : "") +
-    (result.ok ? `✓ would allow — ${result.reason}` : `✗ would block — ${result.reason}`)
+  // The verdict marker sits on its own line; the reason (now a two-
+  // section shape with blank-line separators) follows on its own lines.
+  // Splitting at the boundary keeps the widget readable — a one-line
+  // marker followed by the structured reason, each line as its own
+  // widget entry.
+  const marker = result.ok ? `✓ would allow` : `✗ would block`
+  textBuffer = (textBuffer ? textBuffer + "\n\n" : "") + `${marker}\n${result.reason}`
   render()
 
   if (result.ok) {
@@ -694,4 +718,12 @@ async function runTestEvaluation(ctx: ExtensionCommandContext, cached: CachedSta
   } else {
     ctx.ui.notify(`do-it-right: would block — ${result.reason}`, "warning")
   }
+}
+
+/** First line of a string. The block reason is now two sections
+ *  separated by blank lines; the status bar shows only the headline
+ *  (first line) so it stays single-line readable. */
+function firstLine(s: string): string {
+  const idx = s.indexOf("\n")
+  return idx === -1 ? s : s.slice(0, idx)
 }

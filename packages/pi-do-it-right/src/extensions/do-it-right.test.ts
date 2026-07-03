@@ -344,7 +344,7 @@ describe("do-it-right extension", () => {
     expect(result).toBeUndefined()
   })
 
-  it("bash with ok:false returns { block: true, reason: <reason> + suffix }", async () => {
+  it("bash with ok:false returns { block: true, reason: <reason> } (no suffix added)", async () => {
     const { pi, handlers } = makeFakePi()
     doItRight(pi)
     evaluateMock.mockResolvedValue({ ok: false, reason: "rule 3: rm -rf" })
@@ -355,6 +355,62 @@ describe("do-it-right extension", () => {
     // it. The agent reads this verbatim, and the user sees the same
     // text in the block message.
     expect(result?.reason).toBe("rule 3: rm -rf")
+  })
+
+  it("block reason flows through verbatim even when multi-line", async () => {
+    const { pi, handlers } = makeFakePi()
+    const ui = makeFakeUi()
+    doItRight(pi)
+    // Two-section rejection shape: Violated rules summary + Suggested fix.
+    const reason = [
+      "Violates rule 7",
+      "  • do not use `cat` — use the `read` tool instead",
+      "    Triggered by: `cat README.md`",
+      "",
+      "Suggested fix:",
+      "Use the `read` tool to read README.md instead of `cat`.",
+    ].join("\n")
+    evaluateMock.mockResolvedValue({ ok: false, reason })
+    await startSession(handlers, "/work/a", { ui })
+    const result = await handlers.tool_call?.(makeBashEvent("cat README.md"), makeFakeCtx("/work/a", { ui }))
+    expect(result?.block).toBe(true)
+    expect(result?.reason).toBe(reason)
+  })
+
+  it("status bar shows only the first line of a multi-line block reason", async () => {
+    const { pi, handlers } = makeFakePi()
+    const ui = makeFakeUi()
+    doItRight(pi)
+    const reason = [
+      "Violates rule 7",
+      "  • do not use `cat` — use the `read` tool instead",
+      "    Triggered by: `cat README.md`",
+      "",
+      "Suggested fix:",
+      "$ read README.md",
+    ].join("\n")
+    evaluateMock.mockResolvedValue({ ok: false, reason })
+    await startSession(handlers, "/work/a", { ui })
+    await handlers.tool_call?.(makeBashEvent("cat README.md"), makeFakeCtx("/work/a", { ui }))
+    const blockStatuses = ui.statusCalls.filter((s) => s.text?.includes("— block:"))
+    expect(blockStatuses.length).toBeGreaterThan(0)
+    // The status line MUST be single-line — no newlines in the value.
+    for (const s of blockStatuses) {
+      expect(s.text).not.toMatch(/\n/)
+    }
+    // The first line of the reason is the "Violates rule 7" headline.
+    expect(blockStatuses[0]?.text).toMatch(/— block: Violates rule 7$/)
+  })
+
+  it("single-line block reason passes through to the status bar unchanged", async () => {
+    const { pi, handlers } = makeFakePi()
+    const ui = makeFakeUi()
+    doItRight(pi)
+    evaluateMock.mockResolvedValue({ ok: false, reason: "Violates rule 1" })
+    await startSession(handlers, "/work/a", { ui })
+    await handlers.tool_call?.(makeBashEvent("rm foo"), makeFakeCtx("/work/a", { ui }))
+    const blockStatuses = ui.statusCalls.filter((s) => s.text?.includes("— block:"))
+    expect(blockStatuses[0]?.text).toMatch(/— block: Violates rule 1$/)
   })
 
   it("evaluate throws → handler returns undefined (fail-open)", async () => {
@@ -625,6 +681,67 @@ describe("do-it-right slash command", () => {
             n.type === "warning" && n.message.includes("would block") && n.message.includes("rule 4: do not use cat"),
         ),
       ).toBe(true)
+    })
+
+    it("widget renders each line of a multi-line block reason as its own entry", async () => {
+      const { pi, handlers } = makeFakePi()
+      const ui = makeFakeUi()
+      doItRight(pi)
+      await startSession(handlers, "/work/a", { ui })
+      ui.selectQueue.push("Test Evaluation")
+      ui.inputQueue.push("cat README.md")
+      // Two-section rejection shape: summary, violated rule + triggered
+      // fragment, blank line, suggested fix.
+      const reason = [
+        "Violates rule 4",
+        "  • do not use `cat` — use the `read` tool",
+        "    Triggered by: `cat README.md`",
+        "",
+        "Suggested fix:",
+        "Use the `read` tool to read README.md instead of `cat`.",
+      ].join("\n")
+      evaluateMock.mockReset()
+      evaluateMock.mockResolvedValue({ ok: false, reason })
+      await handlers.do_it_right?.("", makeFakeCtx("/work/a", { ui }) as ExtensionCommandContext)
+      const widget = ui.widgets["do-it-right-eval"]
+      expect(widget).toBeDefined()
+      // Layout (top to bottom): header line, blank, marker, then the
+      // reason split across one entry per line. Critically, NO widget
+      // entry should contain a `\n` — that would mean the buffer was
+      // pushed as a single mangled line.
+      const joined = widget!.join("\n")
+      expect(joined).toContain("Violates rule 4")
+      expect(joined).toContain("Triggered by: `cat README.md`")
+      expect(joined).toContain("Suggested fix:")
+      expect(joined).toContain("✗ would block")
+      for (const entry of widget!) {
+        expect(entry).not.toMatch(/\n/)
+      }
+      // The marker sits on its own line immediately before the reason's
+      // first line, so the verdict is visually separated from the
+      // structured message.
+      const markerIdx = widget!.findIndex((l) => l === "✗ would block")
+      expect(markerIdx).toBeGreaterThan(0)
+      expect(widget![markerIdx + 1]).toBe("Violates rule 4")
+    })
+
+    it("single-line block reason still produces one widget entry for the reason", async () => {
+      const { pi, handlers } = makeFakePi()
+      const ui = makeFakeUi()
+      doItRight(pi)
+      await startSession(handlers, "/work/a", { ui })
+      ui.selectQueue.push("Test Evaluation")
+      ui.inputQueue.push("rm foo")
+      evaluateMock.mockReset()
+      evaluateMock.mockResolvedValue({ ok: false, reason: "rule 1: rm" })
+      await handlers.do_it_right?.("", makeFakeCtx("/work/a", { ui }) as ExtensionCommandContext)
+      const widget = ui.widgets["do-it-right-eval"]
+      expect(widget).toBeDefined()
+      // The reason is one line, so it appears as a single widget entry
+      // directly after the marker.
+      const markerIdx = widget!.findIndex((l) => l === "✗ would block")
+      expect(markerIdx).toBeGreaterThan(0)
+      expect(widget![markerIdx + 1]).toBe("rule 1: rm")
     })
 
     it("cancelled input (Esc) yields no evaluate call and no verdict notify", async () => {
