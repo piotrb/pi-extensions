@@ -5,7 +5,8 @@ import { join } from "node:path"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { loadConfig, STOCK_CONFIG } from "./permission-config.ts"
-import { YOLO_MODE } from "./types.ts"
+import { inventoryWarnings } from "./resolve-mode.ts"
+import { type Config, YOLO_MODE } from "./types.ts"
 
 let tmpCwd: string
 let tmpHome: string
@@ -64,45 +65,37 @@ describe("loadConfig", () => {
     expect(config.toolMetadata).toHaveProperty("bash")
   })
 
-  it("resolves the stock inheritance chain: default extends readonly, edit extends default, plan extends readonly", async () => {
-    // The pre-resolve `extends` field is stripped from the resolved
-    // modes (per `resolveExtends`). So we test the AFTER state: the
-    // deep-merge should have applied the parent rules to the children.
+  it("preserves the stock inheritance chain: default extends readonly, edit extends default, plan extends readonly", async () => {
+    // The JIT loader-cleanup principle: `loadConfig` returns the
+    // merged config with `extends` intact on every mode. Resolution
+    // is a consumer-side projection (`resolveMode(name, config)`)
+    // — the loader does NOT walk `extends` and does NOT strip it.
+    // The matcher / `computeExtendsChain` reads the chain
+    // as-authored. This test pins the new invariant.
     const { config } = await loadConfig(tmpCwd)
-    // `default` inherits readonly's permissive base + adds its own asks.
-    expect(config.modes.default?.tagRules).toMatchObject({
-      readonly: "allow", // inherited from readonly
-      metadata: "allow", // inherited from readonly
-      mutating: "ask", // default's own
-      execution: "ask", // default's own
-      network: "ask", // default's own
+    // `default` extends `readonly`.
+    expect(config.modes.default?.extends).toEqual(["readonly"])
+    // `edit` extends `default` (which extends `readonly` — indirect).
+    expect(config.modes.edit?.extends).toEqual(["default"])
+    // `plan` extends `readonly` directly (skipping `default`).
+    expect(config.modes.plan?.extends).toEqual(["readonly"])
+    // Tag rules are NOT pre-merged by the loader. `default` carries
+    // its own `tagRules` only; the inherited `readonly` rules live
+    // on `readonly` and are applied at consumer time via `resolveMode`.
+    expect(config.modes.default?.tagRules).toEqual({
+      mutating: "ask",
+      execution: "ask",
+      network: "ask",
     })
-    // `edit` inherits everything from default and adds mutating: allow.
-    expect(config.modes.edit?.tagRules).toMatchObject({
-      readonly: "allow", // from readonly (via default)
-      metadata: "allow", // from readonly (via default)
-      mutating: "allow", // edit's own override
-      execution: "ask", // from default
-      network: "ask", // from default
+    expect(config.modes.readonly?.tagRules).toEqual({
+      readonly: "allow",
+      metadata: "allow",
     })
-    // `plan` extends readonly directly (skipping default). The mutating/
-    // execution/network asks from default are NOT inherited.
-    expect(config.modes.plan?.tagRules).toMatchObject({
-      readonly: "allow", // from readonly
-      metadata: "allow", // from readonly
-      mutating: { verdict: "deny" }, // plan's own override
-      execution: { verdict: "deny" }, // plan's own override
-      network: { verdict: "deny" }, // plan's own override
-    })
-    // Plan's defaultDecision is deny, not the ask inherited from readonly.
+    // `plan`'s `defaultDecision` is its own (not stripped, not merged).
     expect(config.modes.plan?.defaultDecision).toEqual({
       verdict: "deny",
       reason: "plan mode denies all by default",
     })
-    // The `extends` field is stripped from the resolved modes.
-    expect(config.modes.default?.extends).toBeUndefined()
-    expect(config.modes.edit?.extends).toBeUndefined()
-    expect(config.modes.plan?.extends).toBeUndefined()
   })
 
   it("orders stock modes as default, readonly, edit, plan, __yolo__ in modeOrder", async () => {
@@ -204,7 +197,7 @@ describe("loadConfig", () => {
 })
 
 describe("extends deep-merge", () => {
-  it("child description wins; child defaultDecision wins", async () => {
+  it("child description wins; child defaultDecision wins; child's tagRules survive", async () => {
     await mkdir(join(tmpCwd, ".pi"), { recursive: true })
     await writeFile(
       join(tmpCwd, ".pi", "tool-policy.json"),
@@ -232,15 +225,20 @@ describe("extends deep-merge", () => {
     const child = config.modes.child!
     expect(child.description).toBe("child desc")
     expect(child.defaultDecision).toBe("deny")
-    // Both parent and child tagRules are present.
-    expect(child.tagRules).toEqual({ x: "deny", y: "ask" })
-    // No extends is left on the resolved mode.
-    expect(child.extends).toBeUndefined()
-    // No cycle warning.
+    // JIT shape: the loader does NOT pre-resolve. The child's
+    // own `tagRules` are merged in (key-wins from the project
+    // layer), but the parent's `tagRules` do NOT appear on the
+    // child — they would only be applied via the consumer's
+    // `resolveMode(name, config)` call. This test pins the new
+    // loader-level behavior: a single layer's fields only.
+    expect(child.tagRules).toEqual({ x: "deny" })
+    // `extends` is preserved on the child.
+    expect(child.extends).toEqual(["parent"])
+    // No cycle warning (valid `extends` chain).
     expect(warnings).toEqual([])
   })
 
-  it("parent tagRules fill in when child does not override them", async () => {
+  it("parent tagRules do NOT auto-fill the child (loader is not a resolver)", async () => {
     await mkdir(join(tmpCwd, ".pi"), { recursive: true })
     await writeFile(
       join(tmpCwd, ".pi", "tool-policy.json"),
@@ -265,7 +263,12 @@ describe("extends deep-merge", () => {
       }),
     )
     const { config } = await loadConfig(tmpCwd)
-    expect(config.modes.child?.tagRules).toEqual({ a: "allow", b: "deny" })
+    // JIT: the child's tagRules is the empty object the user set,
+    // NOT the parent's. The parent lives on `parent` and is reached
+    // at consumer time via `resolveMode`.
+    expect(config.modes.child?.tagRules).toEqual({})
+    // `extends` is preserved.
+    expect(config.modes.child?.extends).toEqual(["parent"])
   })
 
   it("child toolRules list replaces the parent's list (per-tool list replacement)", async () => {
@@ -327,7 +330,7 @@ describe("extends deep-merge", () => {
     expect(config.modes.child?.additionalInstructions).toEqual({ mode: "append", text: "child only" })
   })
 
-  it("parent additionalInstructions applies when child has none", async () => {
+  it("parent additionalInstructions does NOT auto-fill the child (loader is not a resolver)", async () => {
     await mkdir(join(tmpCwd, ".pi"), { recursive: true })
     await writeFile(
       join(tmpCwd, ".pi", "tool-policy.json"),
@@ -353,11 +356,17 @@ describe("extends deep-merge", () => {
       }),
     )
     const { config } = await loadConfig(tmpCwd)
-    expect(config.modes.child?.additionalInstructions).toEqual({ mode: "replace", text: "parent prose" })
+    // JIT: the loader does not walk `extends` chains. The child's
+    // `additionalInstructions` is undefined (the user didn't set it
+    // on the child). The parent's `additionalInstructions` lives on
+    // `parent` and is reached via `resolveMode` at consumer time.
+    expect(config.modes.child?.additionalInstructions).toBeUndefined()
+    // `extends` is preserved.
+    expect(config.modes.child?.extends).toEqual(["parent"])
   })
 })
 
-describe("cycle detection", () => {
+describe("cycle detection (inventory walker via loadConfig)", () => {
   it("detects a → b → a and emits a warning", async () => {
     await mkdir(join(tmpCwd, ".pi"), { recursive: true })
     await writeFile(
@@ -370,6 +379,11 @@ describe("cycle detection", () => {
       }),
     )
     const { warnings } = await loadConfig(tmpCwd)
+    // JIT: cycle detection comes from `inventoryWarnings`,
+    // a pure read-only walker that walks every mode in the
+    // merged config — not the per-mode resolve loop. The
+    // merged config keeps `extends` on each mode; the
+    // inventory walker sees the cycle as-authored.
     expect(warnings.some((w) => w.toLowerCase().includes("cycle"))).toBe(true)
   })
 
@@ -429,6 +443,116 @@ describe("cycle detection", () => {
     )
     const { warnings } = await loadConfig(tmpCwd)
     expect(warnings).toEqual([])
+  })
+
+  it("preserves the `extends` field on every mode (JIT invariant)", async () => {
+    // The JIT loader invariant: `extends` is information, not a
+    // side effect. It survives the merge and survives the loader.
+    const { config } = await loadConfig(tmpCwd)
+    // Stock modes have a known set of `extends` declarations.
+    expect(config.modes.default?.extends).toEqual(["readonly"])
+    expect(config.modes.edit?.extends).toEqual(["default"])
+    expect(config.modes.plan?.extends).toEqual(["readonly"])
+    // `readonly` and `__yolo__` are leaf modes (no `extends`).
+    expect(config.modes.readonly?.extends).toBeUndefined()
+    expect(config.modes.__yolo__?.extends).toBeUndefined()
+  })
+
+  it("preserves a user override that explicitly sets extends: []", async () => {
+    // A user explicitly setting `extends: []` declares "no inheritance".
+    // The JIT loader must NOT strip the user's `extends: []`; the
+    // user is saying "this mode is a leaf, do not walk any chain",
+    // and `resolveMode` honors that. Here the user override at the
+    // project layer sets `extends: []` on `plan` — that replaces the
+    // stock `plan` mode entirely (mode block replacement). The stock
+    // `plan`'s `extends: ["readonly"]` is gone (the user replaced it).
+    // Other modes (e.g. `default`) keep their stock `extends`.
+    await mkdir(join(tmpCwd, ".pi"), { recursive: true })
+    await writeFile(
+      join(tmpCwd, ".pi", "tool-policy.json"),
+      JSON.stringify({
+        modes: {
+          plan: {
+            description: "user-defined plan",
+            extends: [],
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+        },
+      }),
+    )
+    const { config } = await loadConfig(tmpCwd)
+    // The user's `plan` has `extends: []` — preserved.
+    expect(config.modes.plan?.extends).toEqual([])
+    // `default`'s `extends` is unaffected by the user's `plan` override.
+    expect(config.modes.default?.extends).toEqual(["readonly"])
+  })
+
+  it("emits warnings via inventoryWarnings, not via per-mode resolve", () => {
+    // Direct invocation of the inventory walker. Two warnings:
+    // - a cycle (a → b → a),
+    // - an unknown `extends` (a → ghost).
+    // The walker should report BOTH. (The per-mode resolve
+    // would have produced the same warnings, but JIT decouples
+    // them: the loader doesn't call resolve, only inventory.)
+    const config: Config = {
+      modeOrder: ["a", "b"],
+      modes: {
+        a: {
+          description: "a",
+          extends: ["b", "ghost"],
+          defaultDecision: "ask",
+          tagRules: {},
+          toolRules: {},
+          aspectRules: {},
+        },
+        b: { description: "b", extends: ["a"], defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+      },
+      allowedPaths: [],
+      taggingRules: [],
+      toolMetadata: {},
+    }
+    const warnings = inventoryWarnings(config)
+    // Cycle warning naming at least one of the modes.
+    expect(warnings.some((w) => /cycle/i.test(w))).toBe(true)
+    // Unknown-mode warning naming `ghost`.
+    expect(warnings.some((w) => w.includes("ghost") && /unknown|missing|extends/i.test(w))).toBe(true)
+  })
+
+  it("inventoryWarnings is non-mutating (it does not strip extends or alter the input config)", () => {
+    // The walker reads the input; it doesn't write to it. The
+    // input's `extends` field must be exactly what the caller passed
+    // in after the call returns.
+    const config: Config = {
+      modeOrder: ["a"],
+      modes: {
+        a: { description: "a", extends: ["b"], defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+        b: { description: "b", defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+      },
+      allowedPaths: [],
+      taggingRules: [],
+      toolMetadata: {},
+    }
+    const before = JSON.parse(JSON.stringify(config))
+    inventoryWarnings(config)
+    // The input config is unchanged.
+    expect(config).toEqual(before)
+  })
+
+  it("inventoryWarnings returns an empty array on a valid tree (a → b)", () => {
+    const config: Config = {
+      modeOrder: ["a", "b"],
+      modes: {
+        a: { description: "a", extends: ["b"], defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+        b: { description: "b", defaultDecision: "ask", tagRules: {}, toolRules: {}, aspectRules: {} },
+      },
+      allowedPaths: [],
+      taggingRules: [],
+      toolMetadata: {},
+    }
+    expect(inventoryWarnings(config)).toEqual([])
   })
 })
 

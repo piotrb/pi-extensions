@@ -3,7 +3,7 @@ import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 
 import type { ConfigLayers } from "./modal/debug-modal.ts"
-import { resolveMode } from "./resolve-mode.ts"
+import { inventoryWarnings } from "./resolve-mode.ts"
 import { deepMergeToolMetadata } from "./tool-metadata.ts"
 import { type AllowedPath, type Config, type Mode, type ToolMetadata } from "./types.ts"
 
@@ -312,15 +312,14 @@ export async function loadConfig(cwd: string): Promise<LoadedConfig> {
   // in the modal instead of silently disabling the rule.
   validateAspectPatterns(merged.modes, warnings)
 
-  // Resolve extends per-mode via the standalone resolver. Cycles,
-  // unknown-`extends`, and unknown-mode cases each push a warning;
-  // the resolved mode is always safe for the matcher to consume
-  // (extends stripped, tagRules/toolRules/aspectRules populated).
-  for (const name of Object.keys(merged.modes)) {
-    const resolved = resolveMode(name, merged)
-    merged.modes[name] = resolved.mode
-    for (const w of resolved.warnings) warnings.push(w)
-  }
+  // Inventory walk: read-only cycle / unknown-`extends` detection
+  // across every mode in the merged config. The merged config
+  // keeps `extends` intact on every mode (consumers like
+  // `computeExtendsChain` and the matcher — via `resolveMode` —
+  // read the chain as-authored). The inventory walker emits the
+  // same warnings `resolveMode` would have, but without mutating
+  // modes (no `extends` strip, no per-mode resolve loop).
+  for (const w of inventoryWarnings(merged)) warnings.push(w)
 
   // Resolve project-level relative allowedPaths to absolute.
   merged.allowedPaths = merged.allowedPaths.map((entry) => resolveAllowedPath(entry, cwd))

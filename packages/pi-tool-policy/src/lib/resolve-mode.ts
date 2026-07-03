@@ -1,6 +1,71 @@
 import type { Config, Mode } from "./types.ts"
 
 /**
+ * Inventory walker: collects cycle / unknown-`extends` warnings across
+ * **all** modes in `rawConfig` without mutating it.
+ *
+ * Distinct from `resolveMode`:
+ *
+ * - `resolveMode(name, config)` returns one resolved mode for the
+ *   matcher to consume; it strips `extends` and pushes warnings as
+ *   a side effect of walking a single chain.
+ * - `inventoryWarnings(config)` returns a fresh warning array;
+ *   the input config is read-only (no mutation, no strip).
+ *
+ * Together they enforce the principle: the loader merges (it does
+ * NOT call `resolveMode` and does NOT strip `extends`), and the
+ * matcher / JIT consumer calls `resolveMode` itself.
+ *
+ * Behavior:
+ * - Walks every mode in `rawConfig.modes` via a DFS on the
+ *   `extends` graph. The walker reads `extends` to traverse; it
+ *   never assigns to it.
+ * - Emits a cycle warning naming the cycle path the first time
+ *   a name is re-entered on the current DFS stack.
+ * - Emits an unknown-mode warning for each `extends` target not
+ *   in `rawConfig.modes`.
+ * - Returns a fresh array. The input `rawConfig` is untouched.
+ */
+export function inventoryWarnings(rawConfig: Config): string[] {
+  const warnings: string[] = []
+  const visited = new Set<string>()
+  const stack = new Set<string>()
+
+  function walk(name: string): void {
+    if (stack.has(name)) {
+      warnings.push(`Cycle detected in extends chain at mode '${name}' (visited: ${[...stack].join(" → ")} → ${name})`)
+      return
+    }
+    if (visited.has(name)) return
+    visited.add(name)
+    stack.add(name)
+    const m = rawConfig.modes[name]
+    if (!m) {
+      // Unreachable under loadConfig's contract (stock + merged layers
+      // cover every reachable name), but guard against cycles that
+      // reference an outside key the loader couldn't see.
+      stack.delete(name)
+      return
+    }
+    if (m.extends) {
+      for (const ext of m.extends) {
+        if (!(ext in rawConfig.modes)) {
+          warnings.push(`Mode '${name}' extends unknown mode '${ext}'; treating as base`)
+          continue
+        }
+        walk(ext)
+      }
+    }
+    stack.delete(name)
+  }
+
+  for (const name of Object.keys(rawConfig.modes)) {
+    walk(name)
+  }
+  return warnings
+}
+
+/**
  * Resolve a single mode's `extends` chain against the given `rawConfig`.
  *
  * Walks the `extends` declarations on `modeName` (and any parents),
