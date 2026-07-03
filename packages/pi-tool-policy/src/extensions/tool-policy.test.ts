@@ -1,8 +1,10 @@
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolInfo } from "@earendil-works/pi-coding-agent"
 import { describe, expect, it, vi } from "vitest"
 
+import { DirectoryPermissionsState } from "../lib/directory-permissions.ts"
+import { RuntimeState } from "../lib/runtime-state.ts"
 import type { Config, ResolvedToolMetadata } from "../lib/types.ts"
-import toolPolicy, { extractStringFields } from "./tool-policy.ts"
+import toolPolicy, { extractStringFields, seedDirectoryState } from "./tool-policy.ts"
 
 describe("tool-policy extension", () => {
   it("default export is a function of arity 1", () => {
@@ -358,3 +360,91 @@ describe("tool_call wiring of applyEnabledOverrides", () => {
  * observes `tool_call`'s mode selection) is a follow-up that
  * uses a dedicated test harness rather than `vi.doMock`.
  */
+
+/**
+ * Helper-function tests for the Unit 5 wiring. These pin the
+ * "load-bearing behavior the previous ModeController-based
+ * handler had" invariants: the CWD auto-grant for directory
+ * guardrail reads and the active-mode status-bar entry.
+ *
+ * The integration tests above already cover session_start and
+ * tool_call side-effects at the high level; this block covers
+ * the helpers the handler now uses, so regressions are caught
+ * without driving a real pi session.
+ */
+describe("seedDirectoryState (Unit 5 wiring helper)", () => {
+  function makeRuntimeState(
+    initialMode = "default",
+    sessionPaths: { tags: string[]; path: string }[] = [],
+  ): RuntimeState {
+    return RuntimeState.fromTimeline(
+      [
+        // Synthesize a one-shot setMode to land at the desired mode,
+        // then sessionAllowedPaths to land the seed entries.
+        ...(initialMode !== "default"
+          ? [{ type: "setMode" as const, modeName: initialMode, timestamp: "2026-07-01T00:00:00Z" }]
+          : []),
+        ...sessionPaths.map((p) => ({
+          type: "addSessionAllowedPath" as const,
+          entry: { tags: p.tags, path: p.path },
+          timestamp: "2026-07-01T00:00:00Z",
+        })),
+      ],
+      {
+        modeOrder: ["default", "readonly", "edit", "plan", "__yolo__"],
+        modes: {
+          default: {
+            description: "d",
+            defaultDecision: "ask",
+            tagRules: {},
+            toolRules: {},
+            aspectRules: {},
+          },
+        },
+        allowedPaths: [],
+        taggingRules: [],
+        toolMetadata: {},
+      },
+      "/repo",
+    )
+  }
+
+  it("adds the CWD auto-grant so reads inside the project are allowed by default", () => {
+    // Pre-Unit 5 the session_start handler called
+    // `directoryState.reset(cwd)` which added CWD with
+    // `tags: []` (allowAny). Unit 5 had to preserve this or
+    // every read inside the project triggered a modal — this
+    // test catches that regression.
+    const cwd = "/repo"
+    const directoryState = new DirectoryPermissionsState()
+    const runtimeState = makeRuntimeState("default", [])
+    seedDirectoryState(directoryState, runtimeState, cwd)
+    // The CWD auto-grant is recorded.
+    expect(directoryState.has(cwd)).toBe(true)
+    // Any path INSIDE CWD is covered by the allowAny CWD grant
+    // (containment, not exact match). `state.matches` is the
+    // proper containment-aware check the matcher uses.
+    expect(directoryState.matches("/repo/src/foo.ts", ["readonly"])).toBe(true)
+    // REGRESSION: a path OUTSIDE CWD (the user's reported
+    // "outside the project" modal) is NOT covered by default.
+    expect(directoryState.matches("/etc/hosts", ["readonly"])).toBe(false)
+  })
+
+  it("seeds runtimeState.sessionAllowedPaths() alongside the CWD auto-grant", () => {
+    const cwd = "/repo"
+    const directoryState = new DirectoryPermissionsState()
+    const runtimeState = makeRuntimeState("default", [{ tags: ["mutating"], path: "/repo/dist" }])
+    seedDirectoryState(directoryState, runtimeState, cwd)
+    // Both the CWD auto-grant and the timeline-rebuilt session
+    // path are recorded.
+    expect(directoryState.has(cwd)).toBe(true)
+    expect(directoryState.has("/repo/dist")).toBe(true)
+    // Containment for session paths: anything inside /repo/dist
+    // is covered.
+    expect(directoryState.matches("/repo/dist/foo.js", ["mutating"])).toBe(true)
+    // And the CWD auto-grant still covers anything inside
+    // /repo (including paths inside /repo/dist that don't match
+    // the session path's tag set).
+    expect(directoryState.matches("/repo/src/foo.ts", ["readonly"])).toBe(true)
+  })
+})

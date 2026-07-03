@@ -69,6 +69,56 @@ export function extractStringFields(
   return out
 }
 
+/** Status-bar key for the active-mode display. Same key as the
+ * previous `ModeController` so existing user muscle-memory
+ * (and any tooling that watches the key) keeps working. */
+const STATUS_KEY = "tool-policy-mode"
+
+/** Status-bar text for a given active mode. Mirrors the format
+ * `ModeController.refreshStatusBar` produced before Unit 5: the
+ * mode name + the Alt+M hotkey hint, with a distinct rendering
+ * for the YOLO emergency-off mode. */
+function statusTextFor(mode: string): string {
+  if (mode === YOLO_MODE) {
+    return `mode: ${YOLO_MODE} (EMERGENCY OFF)  Alt+M to re-enable`
+  }
+  return `mode: ${mode} (Alt+M)`
+}
+
+/** Set the status bar to reflect the active mode. Pure dispatcher. */
+function setStatusForMode(ctx: ExtensionContext, mode: string): void {
+  ctx.ui.setStatus(STATUS_KEY, statusTextFor(mode))
+}
+
+/**
+ * Seed the directory guardrail's in-memory store from a
+ * `RuntimeState`'s timeline-rebuilt session-allowed-paths.
+ *
+ * Critical behavior the previous ModeController-based handler
+ * had: `directoryState.reset(cwd)` adds the CWD as a
+ * `tags: []` (allowAny) auto-grant, so reads inside the project
+ * don't trigger a modal. The `reset` must be called BEFORE the
+ * session-path seeds (otherwise the seed entries survive but
+ * the CWD auto-grant is lost, which is exactly the regression
+ * this helper fixes).
+ *
+ * Exported for unit tests so the CWD auto-grant invariant can
+ * be pinned without driving the full handler.
+ */
+export function seedDirectoryState(
+  directoryState: DirectoryPermissionsState,
+  runtimeState: RuntimeState,
+  cwd: string,
+): void {
+  directoryState.reset(cwd)
+  for (const p of runtimeState.sessionAllowedPaths()) {
+    directoryState.record(p.path, p.tags, {
+      allowAny: p.tags.length === 0,
+      persistent: true,
+    })
+  }
+}
+
 export default function (pi: ExtensionAPI): void {
   // toolMetadata is structural: built once on session_start, cached for the session.
   let toolMetadata: AggregateResult | null = null
@@ -130,19 +180,13 @@ export default function (pi: ExtensionAPI): void {
       pi.appendEntry(customType, data)
     })
 
-    // Seed the directory guardrail's in-memory store from
-    // RuntimeState's timeline-rebuilt session paths. New session
-    // paths granted during the session live in directoryState;
-    // cross-session persistence via `addSessionAllowedPath` is
-    // a follow-up.
-    if (runtimeState.sessionAllowedPaths().length > 0) {
-      for (const p of runtimeState.sessionAllowedPaths()) {
-        directoryState.record(p.path, p.tags, {
-          allowAny: p.tags.length === 0,
-          persistent: true,
-        })
-      }
-    }
+    // Seed the directory guardrail's in-memory store: CWD
+    // auto-grant (allowAny) PLUS any timeline-rebuilt session
+    // paths. Critical behavior the previous ModeController-based
+    // handler had; Unit 5's runtime-state refactor must preserve
+    // it (without the CWD auto-grant, every read inside the
+    // project triggers a modal).
+    seedDirectoryState(directoryState, runtimeState, ctx.cwd)
 
     // Apply any `toolMetadata[*].enabled` overrides to the runtime active-tools
     // set. Runs unconditionally on session_start — YOLO is a per-`tool_call`
@@ -150,10 +194,13 @@ export default function (pi: ExtensionAPI): void {
     // overrides are declared.
     enabledCache = applyEnabledOverrides(config, pi, enabledCache ?? undefined)
 
+    // Status bar: reflect the active mode (replaces the old
+    // `modeController.refreshStatusBar`). The bar entry shows
+    // the current mode name + the Alt+M hotkey hint.
+    setStatusForMode(ctx, runtimeState.currentModeName())
+
     // The loadConfig warnings (cycle / unknown-`extends` from the
-    // inventory walker) are surfaced via `/tool_policy`'s viewer;
-    // there is no longer a status-bar refresh path here (the old
-    // modeController owned that).
+    // inventory walker) are surfaced via `/tool_policy`'s viewer.
     void warnings
   })
 
@@ -188,6 +235,7 @@ export default function (pi: ExtensionAPI): void {
       const idx = order.indexOf(current)
       const next = order[(idx + 1) % order.length] ?? order[0] ?? current
       runtimeState.setMode(next)
+      setStatusForMode(ctx, next)
       ctx.ui.notify(`mode: ${next}`, "info")
     },
   })
@@ -228,6 +276,7 @@ export default function (pi: ExtensionAPI): void {
       )
       if (next && next !== runtimeState.currentModeName()) {
         runtimeState.setMode(next)
+        setStatusForMode(ctx, next)
         ctx.ui.notify(`mode: ${next}`, "info")
       }
     },

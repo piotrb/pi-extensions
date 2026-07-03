@@ -101,7 +101,8 @@
       },
       "git_restore": {
         "tags": [
-          "mutating"
+          "mutating",
+          "confirm"
         ],
         "aspects": {
           "path": {
@@ -149,7 +150,8 @@
       },
       "git_commit": {
         "tags": [
-          "mutating"
+          "mutating",
+          "confirm"
         ],
         "aspects": {}
       },
