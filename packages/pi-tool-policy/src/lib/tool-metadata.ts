@@ -43,7 +43,6 @@ export const STOCK_BUILTIN_TOOL_METADATA: Record<string, ToolMetadata> = {
   find: { tags: ["readonly"], aspects: { path: { mode: "path", fields: ["path"] } } },
   ls: { tags: ["readonly"], aspects: { path: { mode: "path", fields: ["path"] } } },
   bash: {
-    tags: ["execution"],
     // `command` is a single string (the shell command itself). The bash-mode
     // matcher joins this string with " " if it sees a string[] — but for
     // bash it's always a string, so no format hint is needed.

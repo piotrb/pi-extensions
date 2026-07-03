@@ -22,12 +22,12 @@ describe("buildNoUIBlockReason", () => {
   it("names the tool, the matched rule, and the no-UI situation in one block", () => {
     const reason = buildNoUIBlockReason(
       makeEvent("bash"),
-      makeDecision("Permission requested: tag:execution"),
+      makeDecision("Permission requested: tag:mutating"),
       "default",
     )
     expect(reason).toContain("`bash` tool call")
     expect(reason).toContain("non-interactive context")
-    expect(reason).toContain("Permission requested: tag:execution")
+    expect(reason).toContain("Permission requested: tag:mutating")
     expect(reason).toContain("`default` mode")
   })
 

@@ -19,12 +19,8 @@
 - do not use `test -d {some path}` to test for the existence of directories. Just use the `ls` tool outside of `bash` and you will know if it exists or not.
 - if you're trying to grep a file list for a particular pattern, use the `find` tool outside of `bash` instead of `find | grep` or `ls | grep` type `bash` commands.
 
-
 - do not use `cd` to the project root infront of commands, just run them directly. Assume the bash tool always starts at the project root.
 
 - do not use `git stash` to temporarily hide changes in order to test or check a baseline state — if there are errors, they should be fixed directly; stashing and popping around checks is dangerous and masks the real problem
 
 - do not use `mkdir` or `mkdir -p` to create directories before writing content with shell redirects — the `write` tool creates parent directories automatically (but `mkdir` is fine before legitimate file operations like `cp` or `mv`)
-
-- do not use `curl` or `wget` to fetch URLs, use the built in `WebFetch` tool
-

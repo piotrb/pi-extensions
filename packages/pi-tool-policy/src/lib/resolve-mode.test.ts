@@ -93,7 +93,7 @@ describe("resolveMode", () => {
       const parent = makeMode({
         extends: ["grandparent"],
         defaultDecision: "ask",
-        tagRules: { execution: "ask" },
+        tagRules: { network: "ask" },
         description: "parent",
       })
       const child = makeMode({
@@ -112,7 +112,7 @@ describe("resolveMode", () => {
       // All three levels of tagRules merge in.
       expect(mode.tagRules).toEqual({
         readonly: "allow",
-        execution: "ask",
+        network: "ask",
         mutating: "allow",
       })
     })

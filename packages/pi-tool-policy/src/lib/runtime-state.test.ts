@@ -20,7 +20,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
         description: "default",
         extends: ["readonly"],
         defaultDecision: "ask",
-        tagRules: { mutating: "ask", execution: "ask", network: "ask" },
+        tagRules: { mutating: "ask", network: "ask" },
         toolRules: {},
         aspectRules: {},
       },
@@ -38,7 +38,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
         defaultDecision: "deny",
         tagRules: {
           mutating: "deny",
-          execution: "deny",
           network: "deny",
         },
         toolRules: {},

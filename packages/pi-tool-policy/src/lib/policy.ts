@@ -47,7 +47,7 @@ export function coerceForMatch(value: unknown): string | undefined {
  * The default layer is least specific. The order is fixed; aspect > tool
  * > tag > default reflects the design intent: an explicit per-pattern
  * aspect rule (`bash_cmd "ls *" = allow`) should beat a broad tag rule
- * (`tag:execution = ask`), because the aspect rule encodes a more
+ * (`tag:mutating = ask`), because the aspect rule encodes a more
  * specific user intent. See the per-layer combine in `evaluate()`.
  */
 const LAYER_PRIORITY: readonly RuleResult["layer"][] = ["aspect", "tool", "tag", "default"] as const
@@ -63,7 +63,7 @@ const LAYER_PRIORITY: readonly RuleResult["layer"][] = ["aspect", "tool", "tag",
  *
  * Why not the old "flat most-restrictive wins" combine? An aspect rule
  * like `bash_cmd "ls *" = allow` is a more specific user intent than
- * `tag:execution = ask`, and the user reasonably expects the explicit
+ * `tag:mutating = ask`, and the user reasonably expects the explicit
  * per-pattern allow to win. Under the old flat combine, the tag's
  * blanket `ask` would suppress the aspect's `allow` because `ask` is
  * more restrictive at the per-rule level — even though the user wrote
@@ -80,7 +80,7 @@ const LAYER_PRIORITY: readonly RuleResult["layer"][] = ["aspect", "tool", "tag",
  *
  * `deny` is sticky to preserve the safety invariant: a `deny` from
  * ANY layer is the final answer, regardless of layer priority. A
- * `tag:execution = deny` must not be overridable by an aspect `allow`.
+ * `tag:mutating = deny` must not be overridable by an aspect `allow`.
  *
  * **Undecided layers defer.** When a layer has no rules (e.g. no
  * aspect pattern matched the call, no tool rule was defined), the

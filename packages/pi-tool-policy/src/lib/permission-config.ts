@@ -20,16 +20,16 @@ const USER_PATH = () => join(homedir(), ".pi", "tool-policy.json")
  *                tags, asks for everything else. A new `readonly` mode
  *                that this config introduces; users who want a stricter
  *                read-only mode can drop in a different one.
- *   `default`  — extends `readonly`. Adds the `mutating`, `execution`,
- *                and `network` `ask` overrides. The everyday mode.
+ *   `default`  — extends `readonly`. Adds the `mutating` and `network`
+ *                `ask` overrides. The everyday mode.
  *   `edit`     — extends `default`. Adds the `mutating: allow` override
  *                so file writes/edits go through without prompting. Still
- *                asks for `execution` and `network` because those can
- *                have side effects beyond a single file.
+ *                asks for `network` because it can have side effects
+ *                beyond a single file.
  *   `plan`     — extends `readonly` directly (skipping `default`).
- *                Overrides `mutating`, `execution`, and `network` to
- *                `deny` and sets `defaultDecision: deny`. The
- *                read-then-plan mode; nothing mutates, nothing executes.
+ *                Overrides `mutating` and `network` to `deny` and sets
+ *                `defaultDecision: deny`. The read-then-plan mode;
+ *                nothing mutates, nothing reaches the network.
  *
  * Why `plan` extends `readonly` and not `default`? Plan mode wants
  * `mutating: deny`, not `mutating: ask` — extending `default` would
@@ -53,6 +53,7 @@ export const STOCK_CONFIG: Config = {
       tagRules: {
         readonly: "allow",
         metadata: "allow",
+        confirm: "ask",
       },
       toolRules: {},
       aspectRules: {},
@@ -63,7 +64,6 @@ export const STOCK_CONFIG: Config = {
       defaultDecision: "ask",
       tagRules: {
         mutating: "ask",
-        execution: "ask",
         network: "ask",
       },
       toolRules: {},
@@ -85,7 +85,6 @@ export const STOCK_CONFIG: Config = {
       defaultDecision: { verdict: "deny", reason: "plan mode denies all by default" },
       tagRules: {
         mutating: { verdict: "deny", reason: "mutating operations not allowed in plan mode" },
-        execution: { verdict: "deny", reason: "execution not allowed in plan mode" },
         network: { verdict: "deny", reason: "network access not allowed in plan mode" },
       },
       toolRules: {},
@@ -130,7 +129,6 @@ export const STOCK_CONFIG: Config = {
     find: { tags: ["readonly"], aspects: { path: { mode: "path", fields: ["path"] } } },
     ls: { tags: ["readonly"], aspects: { path: { mode: "path", fields: ["path"] } } },
     bash: {
-      tags: ["execution"],
       aspects: { bash_cmd: { mode: "bash", fields: ["command"] } },
     },
   },

@@ -84,10 +84,9 @@ describe("loadConfig", () => {
     // on `readonly` and are applied at consumer time via `resolveMode`.
     expect(config.modes.default?.tagRules).toEqual({
       mutating: "ask",
-      execution: "ask",
       network: "ask",
     })
-    expect(config.modes.readonly?.tagRules).toEqual({
+    expect(config.modes.readonly?.tagRules).toMatchObject({
       readonly: "allow",
       metadata: "allow",
     })

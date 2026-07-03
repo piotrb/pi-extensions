@@ -15,7 +15,7 @@ function modeWith(rules: Partial<Mode> = {}): Mode {
 }
 
 const runMeta: ResolvedToolMetadata = {
-  tags: ["execution"],
+  tags: [],
   fields: { command: { mode: "bash", fields: ["cmd"] } },
 }
 

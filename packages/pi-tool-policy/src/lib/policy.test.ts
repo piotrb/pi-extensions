@@ -125,7 +125,7 @@ describe("evaluate", () => {
           aspectRules: { bash_cmd: bash },
         },
         [],
-        new Map([["bash", { tags: ["execution"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }]]),
+        new Map([["bash", { tags: ["mutating"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }]]),
       )
       expect(decision.action).toBe("deny")
     })
@@ -307,10 +307,10 @@ describe("evaluate", () => {
   describe("per-layer combine (most-specific layer wins; deny is sticky)", () => {
     it("REGRESSION: aspect 'allow' beats tag 'ask' (the bug-report case)", () => {
       // From the bug report: a `bash` call with command `["ls", "*"]`
-      // and effective tag `execution`. The user wrote an aspect rule
+      // and effective tag `mutating`. The user wrote an aspect rule
       // `bash_cmd "ls *" = allow` to allow `ls` calls without
-      // prompting. The tag rule `tag:execution = ask` is a blanket
-      // ask for everything tagged execution. Under the old
+      // prompting. The tag rule `tag:mutating = ask` is a blanket
+      // ask for everything tagged mutating. Under the old
       // flat-most-restrictive combine, the tag's `ask` won. Under
       // the new per-layer combine, the more-specific aspect layer
       // wins, so the call is allowed.
@@ -321,12 +321,12 @@ describe("evaluate", () => {
         {
           description: "test",
           defaultDecision: "ask",
-          tagRules: { execution: "ask" },
+          tagRules: { mutating: "ask" },
           toolRules: {},
           aspectRules: { bash_cmd: bash },
         },
-        ["execution"],
-        new Map([["bash", { tags: ["execution"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }]]),
+        ["mutating"],
+        new Map([["bash", { tags: ["mutating"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }]]),
       )
       expect(decision.action).toBe("allow")
       const aspectRule = decision.ruleTrail.find((r) => r.layer === "aspect")
@@ -426,11 +426,11 @@ describe("evaluate", () => {
         {
           description: "test",
           defaultDecision: "ask",
-          tagRules: { execution: "ask" },
+          tagRules: { mutating: "ask" },
           toolRules: { bash: [{ fields: { command: ["echo *"] }, verdict: "allow" }] },
           aspectRules: {},
         },
-        ["execution"],
+        ["mutating"],
       )
       expect(decision.action).toBe("allow")
       const toolRule = decision.ruleTrail.find((r) => r.layer === "tool")
@@ -448,11 +448,11 @@ describe("evaluate", () => {
         {
           description: "test",
           defaultDecision: "ask",
-          tagRules: { execution: "deny" },
+          tagRules: { mutating: "deny" },
           toolRules: { bash: [{ verdict: "deny" }] },
           aspectRules: {},
         },
-        ["execution"],
+        ["mutating"],
       )
       expect(decision.action).toBe("deny")
       const toolRule = decision.ruleTrail.find((r) => r.layer === "tool")
@@ -492,11 +492,11 @@ describe("evaluate", () => {
         {
           description: "test",
           defaultDecision: "ask",
-          tagRules: { execution: { verdict: "deny", reason: "no execution in plan mode" } },
+          tagRules: { mutating: { verdict: "deny", reason: "no mutating in plan mode" } },
           toolRules: { bash: [{ verdict: { verdict: "ask", reason: "always ask for bash" } }] },
           aspectRules: {},
         },
-        ["execution"],
+        ["mutating"],
       )
       expect(decision.action).toBe("deny")
       // For deny verdicts, the reason is a 3-part layout: headline
@@ -506,7 +506,7 @@ describe("evaluate", () => {
       // 'deny').
       expect(decision.reason).toBe(
         "The agent was not permitted to call the `bash` tool in `default` mode.\n\n" +
-          'Reason from the rule: "no execution in plan mode"\n\n' +
+          'Reason from the rule: "no mutating in plan mode"\n\n' +
           "Analyze why this call was blocked and adjust your approach accordingly.",
       )
     })
@@ -900,13 +900,11 @@ describe("buildDenyReason", () => {
     const reason = buildDenyReason({
       toolName: "bash",
       modeName: "plan",
-      appliedRules: [{ layer: "tag", key: "execution", verdict: "deny", status: "applied" }],
-      reasonParts: ["no execution in plan mode"],
+      appliedRules: [{ layer: "tag", key: "mutating", verdict: "deny", status: "applied" }],
+      reasonParts: ["no mutating in plan mode"],
       explicitRuleFired: true,
     })
-    expect(reason).toBe(
-      `${head("bash", "plan")}\n\n` + `Reason from the rule: "no execution in plan mode"\n\n` + suffix,
-    )
+    expect(reason).toBe(`${head("bash", "plan")}\n\n` + `Reason from the rule: "no mutating in plan mode"\n\n` + suffix)
   })
 
   it("joins multiple configured reasons with '; ' inside the same quoted span", () => {
@@ -914,14 +912,14 @@ describe("buildDenyReason", () => {
       toolName: "bash",
       modeName: "default",
       appliedRules: [
-        { layer: "tag", key: "execution", verdict: "deny", status: "applied", reason: "no execution" },
+        { layer: "tag", key: "mutating", verdict: "deny", status: "applied", reason: "no mutating" },
         { layer: "tool", key: "bash", verdict: "deny", status: "applied", reason: "bash is banned" },
       ],
-      reasonParts: ["no execution", "bash is banned"],
+      reasonParts: ["no mutating", "bash is banned"],
       explicitRuleFired: true,
     })
     expect(reason).toBe(
-      `${head("bash", "default")}\n\n` + `Reason from the rule: "no execution"; "bash is banned"\n\n` + suffix,
+      `${head("bash", "default")}\n\n` + `Reason from the rule: "no mutating"; "bash is banned"\n\n` + suffix,
     )
   })
 
@@ -929,7 +927,7 @@ describe("buildDenyReason", () => {
     const reason = buildDenyReason({
       toolName: "bash",
       modeName: "default",
-      appliedRules: [{ layer: "tag", key: "execution", verdict: "deny", status: "applied", reason: "from config" }],
+      appliedRules: [{ layer: "tag", key: "mutating", verdict: "deny", status: "applied", reason: "from config" }],
       // The configured reason is also present, but the one-off reason
       // wins — the user just told us why NOW.
       reasonParts: ["from config"],
@@ -995,19 +993,19 @@ describe("buildDenyReason", () => {
     const reason = buildDenyReason({
       toolName: "bash",
       modeName: "default",
-      appliedRules: [{ layer: "tag", key: "execution", verdict: "deny", status: "applied" }],
+      appliedRules: [{ layer: "tag", key: "mutating", verdict: "deny", status: "applied" }],
       reasonParts: ["", ""],
       explicitRuleFired: true,
     })
     // Empty-string reasons fall through to the "Matched rule" path.
-    expect(reason).toContain("Matched rule: tag:execution")
+    expect(reason).toContain("Matched rule: tag:mutating")
   })
 
   it("ignores empty user reason (falls through to configured reason)", () => {
     const reason = buildDenyReason({
       toolName: "bash",
       modeName: "default",
-      appliedRules: [{ layer: "tag", key: "execution", verdict: "deny", status: "applied", reason: "configured" }],
+      appliedRules: [{ layer: "tag", key: "mutating", verdict: "deny", status: "applied", reason: "configured" }],
       reasonParts: ["configured"],
       explicitRuleFired: true,
       userReason: "",
@@ -1025,7 +1023,7 @@ describe("buildDenyReason", () => {
  * Without the resolve-on-consumer step, the matcher's
  * `mode.tagRules[tag]` lookup misses inherited rules (e.g. `edit`'s
  * own tagRules is just `{ mutating: "allow" }`; the `readonly`,
- * `metadata`, `execution`, `network` rules live on `default` /
+ * `metadata`, `network` rules live on `default` /
  * `readonly` and are reached only via `resolveMode`).
  *
  * This is a regression test for Unit 7a's handler-side fix; if a
@@ -1047,10 +1045,10 @@ describe("JIT consumer — resolveMode before evaluate", () => {
         aspectRules: {},
       },
       default: {
-        description: "asks for mutating/execution/network",
+        description: "asks for mutating/network",
         extends: ["readonly"],
         defaultDecision: "ask",
-        tagRules: { mutating: "ask", execution: "ask", network: "ask" },
+        tagRules: { mutating: "ask", network: "ask" },
         toolRules: {},
         aspectRules: {},
       },
@@ -1068,7 +1066,6 @@ describe("JIT consumer — resolveMode before evaluate", () => {
         defaultDecision: "deny",
         tagRules: {
           mutating: "deny",
-          execution: "deny",
           network: "deny",
         },
         toolRules: {},
@@ -1106,9 +1103,9 @@ describe("JIT consumer — resolveMode before evaluate", () => {
     expect(decision.action).toBe("allow")
   })
 
-  it("default-mode bash (execution tag) asks (resolved default inherits execution:ask)", () => {
+  it("default-mode bash (mutating tag) asks (resolved default inherits mutating:ask)", () => {
     const bashMeta = new Map<string, ResolvedToolMetadata>([
-      ["bash", { tags: ["execution"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }],
+      ["bash", { tags: ["mutating"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }],
     ])
     const { mode } = resolveMode("default", configWithExtends)
     const evalConfig: Config = {
@@ -1119,23 +1116,23 @@ describe("JIT consumer — resolveMode before evaluate", () => {
       makeEvent("bash", { command: ["ls"] }),
       evalConfig,
       "default",
-      ["execution"],
+      ["mutating"],
       bashMeta,
       ctx,
     )
     expect(decision.action).toBe("ask")
   })
 
-  it("plan-mode bash (execution tag) denies (resolved plan has execution:deny)", () => {
+  it("plan-mode bash (mutating tag) denies (resolved plan has mutating:deny)", () => {
     const bashMeta = new Map<string, ResolvedToolMetadata>([
-      ["bash", { tags: ["execution"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }],
+      ["bash", { tags: ["mutating"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }],
     ])
     const { mode } = resolveMode("plan", configWithExtends)
     const evalConfig: Config = {
       ...configWithExtends,
       modes: { ...configWithExtends.modes, plan: mode },
     }
-    const decision = evaluate(makeEvent("bash", { command: ["ls"] }), evalConfig, "plan", ["execution"], bashMeta, ctx)
+    const decision = evaluate(makeEvent("bash", { command: ["ls"] }), evalConfig, "plan", ["mutating"], bashMeta, ctx)
     expect(decision.action).toBe("deny")
   })
 
@@ -1148,7 +1145,7 @@ describe("JIT consumer — resolveMode before evaluate", () => {
   it("REGRESSION: read in raw default mode (no resolveMode) → ask (the bug)", () => {
     // No resolveMode call. The matcher's tagRules["readonly"] lookup
     // misses because the raw `default` mode's tagRules is only
-    // { mutating, execution, network }. The matcher falls through
+    // { mutating, network }. The matcher falls through
     // to defaultDecision ("ask"). This is the bug.
     const decision = evaluate(
       makeEvent("read", { path: "/repo/foo.ts" }),

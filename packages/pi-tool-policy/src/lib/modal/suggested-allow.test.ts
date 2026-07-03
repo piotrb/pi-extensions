@@ -7,7 +7,7 @@ describe("buildSuggestedAllow", () => {
   describe("aspect-decorated scalar-mode tools", () => {
     it("locks run with cmd: ['ls'] to the joined command 'ls'", () => {
       const meta: ResolvedToolMetadata = {
-        tags: ["execution"],
+        tags: [],
         fields: { command: { mode: "bash", fields: ["cmd"] } },
       }
       const out = buildSuggestedAllow("run", { cmd: ["ls"] }, meta)
@@ -20,7 +20,7 @@ describe("buildSuggestedAllow", () => {
 
     it("joins string[] args with ' ' so the matcher can full-string match", () => {
       const meta: ResolvedToolMetadata = {
-        tags: ["execution"],
+        tags: [],
         fields: { command: { mode: "bash", fields: ["cmd"] } },
       }
       const out = buildSuggestedAllow("run", { cmd: ["ls", "-la", "/tmp"] }, meta)
@@ -192,7 +192,7 @@ describe("buildSuggestedAllow", () => {
 
     it("does NOT relativize non-path-mode aspects even when cwd is given", () => {
       const meta: ResolvedToolMetadata = {
-        tags: ["execution"],
+        tags: [],
         fields: { command: { mode: "bash", fields: ["cmd"] } },
       }
       const out = buildSuggestedAllow("run", { cmd: ["ls", "-la", "/tmp"] }, meta, "/repo")

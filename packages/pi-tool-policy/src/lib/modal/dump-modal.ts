@@ -1,6 +1,24 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
+import type { ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent"
 import { DynamicBorder } from "@earendil-works/pi-coding-agent"
 import { Container, Key, matchesKey, Text } from "@earendil-works/pi-tui"
+
+/**
+ * Serialize the live `ToolInfo[]` for the dump-modal. Each entry is
+ * projected to `{ name, sourceInfo, enabled }` — the typebox parameter
+ * schema is dropped (it bloats the dump and isn't useful for "where did
+ * this tool come from?" debugging). The `enabled` flag comes from
+ * `pi.getActiveTools()` and reflects the runtime tool-activation state
+ * (separate from policy — see /tools for interactive enable/disable).
+ */
+export function dumpTools(tools: readonly ToolInfo[], activeTools: readonly string[]): string {
+  const activeSet = new Set(activeTools)
+  const projected = tools.map((t) => ({
+    name: t.name,
+    enabled: activeSet.has(t.name),
+    sourceInfo: t.sourceInfo,
+  }))
+  return JSON.stringify(projected, null, 2)
+}
 
 /**
  * Open a scrollable text-view modal. Renders `content` inside a bordered

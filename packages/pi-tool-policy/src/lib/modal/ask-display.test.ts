@@ -63,7 +63,7 @@ describe("buildAskDisplay", () => {
 
     it("quotes values that contain spaces (scalar mode)", () => {
       const meta: ResolvedToolMetadata = {
-        tags: ["execution"],
+        tags: [],
         // bash mode (scalar, joined). run's cmd: string[] joins with " ".
         fields: { command: { mode: "bash", fields: ["cmd"] } },
       }
@@ -198,7 +198,7 @@ describe("buildAskDisplay", () => {
       // `bash` aspect value is not a path; relativizing it would be
       // wrong.
       const meta: ResolvedToolMetadata = {
-        tags: ["execution"],
+        tags: [],
         fields: { command: { mode: "bash", fields: ["cmd"] } },
       }
       const out = buildAskDisplay("run", { cmd: ["ls", "-la", "/tmp"] }, meta, "/repo")

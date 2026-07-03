@@ -198,8 +198,8 @@ export interface ResolvedToolMetadata {
  *   layer's verdict is the global winner. At most one rule per
  *   call has this status.
  * - `shadowed` — this rule's verdict was less restrictive than
- *   the layer winner (e.g. a `tag:execution: allow` shadowed by
- *   a `tag:execution: ask` from the same layer, or a `tag:execution:
+ *   the layer winner (e.g. a `tag:readonly: allow` shadowed by
+ *   a `tag:readonly: ask` from the same layer, or a `tag:mutating:
  *   ask` shadowed by a more-specific `aspect: allow` from the
  *   aspect layer). The user sees this in the trail as debug
  *   context, not as a contributing rule.

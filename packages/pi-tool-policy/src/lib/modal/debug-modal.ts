@@ -6,6 +6,7 @@ import type { DirectoryGrantSnapshot } from "../directory-permissions.ts"
 import type { AggregateResult } from "../tool-metadata.ts"
 import type { Config } from "../types.ts"
 import { openDumpModal } from "./dump-modal.ts"
+import { openToolsListModal } from "./tools-list-modal.ts"
 
 /**
  * The three raw `modes` blocks that feed into the final merged config:
@@ -75,24 +76,6 @@ export function dumpToolMetadata(result: AggregateResult): string {
   return JSON.stringify(result.discovered, null, 2)
 }
 
-/**
- * Serialize the live `ToolInfo[]` for the dump-modal. Each entry is
- * projected to `{ name, sourceInfo, enabled }` — the typebox parameter
- * schema is dropped (it bloats the dump and isn't useful for "where did
- * this tool come from?" debugging). The `enabled` flag comes from
- * `pi.getActiveTools()` and reflects the runtime tool-activation state
- * (separate from policy — see /tools for interactive enable/disable).
- */
-export function dumpTools(tools: readonly ToolInfo[], activeTools: readonly string[]): string {
-  const activeSet = new Set(activeTools)
-  const projected = tools.map((t) => ({
-    name: t.name,
-    enabled: activeSet.has(t.name),
-    sourceInfo: t.sourceInfo,
-  }))
-  return JSON.stringify(projected, null, 2)
-}
-
 /** Serialize the directory-permissions grant store for the dump-modal. */
 export function dumpDirectoryPermissions(grants: readonly DirectoryGrantSnapshot[]): string {
   return JSON.stringify(grants, null, 2)
@@ -149,9 +132,15 @@ export async function openDebugModal(
             title = "Discovered Tool Metadata"
             break
           case "tools":
-            content = dumpTools(liveTools, activeTools)
-            title = "Live Tool Registry"
-            break
+            // Tools gets its own two-level sub-modal: pick a tool, then
+            // see its structured detail in a popover. We `return` (not
+            // `break`) so the dump-modal popover machinery doesn't run
+            // — openToolsListModal is a sibling of this debug sub-modal,
+            // not a child dump.
+            void openToolsListModal(ctx, liveTools, activeTools).then(() => {
+              tui.requestRender()
+            })
+            return
           case "directory_permissions":
             content = dumpDirectoryPermissions(directoryGrants)
             title = "Directory Permissions"

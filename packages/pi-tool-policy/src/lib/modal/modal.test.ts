@@ -10,9 +10,9 @@ import {
   dumpConfigLayers,
   dumpDirectoryPermissions,
   dumpToolMetadata,
-  dumpTools,
 } from "./debug-modal.ts"
 import { buildDirectoryOptions, buildDirectoryTitle } from "./directory-permissions-modal.ts"
+import { dumpTools } from "./dump-modal.ts"
 import {
   buildPolicyAskTitle,
   buildRuleTypeOptions,
@@ -22,6 +22,7 @@ import {
   sortTrailForDisplay,
 } from "./policy-ask-modal.ts"
 import { buildToolPolicyOptions } from "./tool-policy-modal.ts"
+import { buildToolsList, formatToolDetail } from "./tools-list-modal.ts"
 
 function makeDirectoryArgs(args: Omit<DirectoryPromptArgs, "cwd">): DirectoryPromptArgs {
   return { cwd: "/project", ...args }
@@ -211,7 +212,7 @@ describe("buildTopLevelOptions", () => {
 describe("buildRuleTypeOptions", () => {
   it("includes one aspect row per declared aspect with a value", () => {
     const meta: ResolvedToolMetadata = {
-      tags: ["execution"],
+      tags: [],
       fields: { command: { mode: "bash", fields: ["cmd"] } },
     }
     const rows = buildRuleTypeOptions("run", { cmd: ["ls"] }, meta, { aspectCovered: false, toolCovered: false })
@@ -232,7 +233,7 @@ describe("buildRuleTypeOptions", () => {
 
   it("hides aspect rules when the call is already aspect-covered", () => {
     const meta: ResolvedToolMetadata = {
-      tags: ["execution"],
+      tags: [],
       fields: { command: { mode: "bash", fields: ["cmd"] } },
     }
     const rows = buildRuleTypeOptions("run", { cmd: ["ls"] }, meta, { aspectCovered: true, toolCovered: false })
@@ -242,7 +243,7 @@ describe("buildRuleTypeOptions", () => {
 
   it("hides tool rules when the call is already tool-rule-covered", () => {
     const meta: ResolvedToolMetadata = {
-      tags: ["execution"],
+      tags: [],
       fields: { command: { mode: "bash", fields: ["cmd"] } },
     }
     const rows = buildRuleTypeOptions("run", { cmd: ["ls"] }, meta, { aspectCovered: false, toolCovered: true })
@@ -251,7 +252,7 @@ describe("buildRuleTypeOptions", () => {
 
   it("hides everything when both layers are covered (caller should fall back to deny)", () => {
     const meta: ResolvedToolMetadata = {
-      tags: ["execution"],
+      tags: [],
       fields: { command: { mode: "bash", fields: ["cmd"] } },
     }
     const rows = buildRuleTypeOptions("run", { cmd: ["ls"] }, meta, { aspectCovered: true, toolCovered: true })
@@ -314,7 +315,7 @@ describe("sortTrailForDisplay", () => {
     // The sort puts the aspect `applied` first, then the rest by
     // layer priority (tool > tag > default).
     const trail = [
-      makeRule("tag", "shadowed", "execution"),
+      makeRule("tag", "shadowed", "mutating"),
       makeRule("aspect", "applied", "bash_cmd"),
       makeRule("tool", "shadowed", "bash"),
       makeRule("default", "shadowed", "<default>"),
@@ -329,7 +330,7 @@ describe("sortTrailForDisplay", () => {
     // order (tag → aspect → tool → default). The display order
     // re-orders by layer priority.
     const trail = [
-      makeRule("tag", "shadowed", "execution"),
+      makeRule("tag", "shadowed", "mutating"),
       makeRule("aspect", "shadowed", "path"),
       makeRule("tool", "shadowed", "read"),
       makeRule("default", "shadowed", "<default>"),
@@ -363,14 +364,14 @@ describe("sortTrailForDisplay", () => {
     // together (priority 1 each), within-layer order preserved.
     const trail = [
       makeRule("tag", "noop", "metadata"),
-      makeRule("tag", "shadowed", "execution"),
+      makeRule("tag", "shadowed", "mutating"),
       makeRule("aspect", "applied", "bash_cmd"),
     ]
     const sorted = sortTrailForDisplay(trail)
     expect(sorted[0]?.key).toBe("bash_cmd")
     // tag rules retain their input order.
     expect(sorted[1]?.key).toBe("metadata")
-    expect(sorted[2]?.key).toBe("execution")
+    expect(sorted[2]?.key).toBe("mutating")
   })
 
   it("returns the input untouched for an empty trail", () => {
@@ -378,7 +379,7 @@ describe("sortTrailForDisplay", () => {
   })
 
   it("does not mutate the input array", () => {
-    const trail = [makeRule("tag", "shadowed", "execution"), makeRule("default", "applied", "<default>")]
+    const trail = [makeRule("tag", "shadowed", "mutating"), makeRule("default", "applied", "<default>")]
     const inputSnapshot = [...trail]
     sortTrailForDisplay(trail)
     expect(trail).toEqual(inputSnapshot)
@@ -389,7 +390,7 @@ describe("buildPolicyAskTitle", () => {
   it("renders the 'Allow tool call: X?' header as the first line", () => {
     const title = buildPolicyAskTitle({
       toolName: "bash",
-      effectiveTags: ["execution"],
+      effectiveTags: ["mutating"],
       currentMode: "plan",
       input: { command: "ls" },
       toolMeta: undefined,
@@ -402,7 +403,7 @@ describe("buildPolicyAskTitle", () => {
   it("does NOT include 'Tool policy:' or 'Reason:' (both removed for clarity)", () => {
     const title = buildPolicyAskTitle({
       toolName: "bash",
-      effectiveTags: ["execution"],
+      effectiveTags: ["mutating"],
       currentMode: "default",
       reason: "some reason",
       input: {},
@@ -416,13 +417,13 @@ describe("buildPolicyAskTitle", () => {
   it("combines mode + tags on one compact line with '·' separator", () => {
     const title = buildPolicyAskTitle({
       toolName: "bash",
-      effectiveTags: ["execution"],
+      effectiveTags: ["mutating"],
       currentMode: "default",
       input: {},
       toolMeta: undefined,
       cwd: "/repo",
     })
-    expect(title).toContain("Mode: default · Tags: execution")
+    expect(title).toContain("Mode: default · Tags: mutating")
   })
 
   it("renders '(none)' for an empty tag set", () => {
@@ -451,12 +452,12 @@ describe("buildPolicyAskTitle", () => {
 
   it("includes aspect-decorated field lines between the header and the mode line", () => {
     const meta: ResolvedToolMetadata = {
-      tags: ["execution"],
+      tags: [],
       fields: { command: { mode: "bash", fields: ["cmd"] } },
     }
     const title = buildPolicyAskTitle({
       toolName: "run",
-      effectiveTags: ["execution"],
+      effectiveTags: ["mutating"],
       currentMode: "default",
       input: { cmd: ["ls"] },
       toolMeta: meta,
@@ -544,13 +545,13 @@ describe("buildPolicyAskTitle", () => {
     // rule that appears earlier in the input.
     const title = buildPolicyAskTitle({
       toolName: "bash",
-      effectiveTags: ["execution"],
+      effectiveTags: ["mutating"],
       currentMode: "default",
       input: { command: "ls" },
       toolMeta: undefined,
       cwd: "/repo",
       ruleTrail: [
-        { layer: "tag", key: "execution", verdict: "ask", status: "shadowed" },
+        { layer: "tag", key: "mutating", verdict: "ask", status: "shadowed" },
         { layer: "aspect", key: "bash_cmd", aspect: "bash_cmd", pattern: "ls *", verdict: "ask", status: "applied" },
         { layer: "tool", key: "bash", verdict: "ask", status: "shadowed" },
         { layer: "default", key: "<default>", verdict: "ask", status: "noop" },
@@ -560,7 +561,7 @@ describe("buildPolicyAskTitle", () => {
     // title. The aspect `applied` rule should be FIRST among the
     // rules, not the tag rule (which was first in the input).
     const aspectIdx = title.indexOf("aspect bash_cmd (ls *)")
-    const tagIdx = title.indexOf("tag:execution")
+    const tagIdx = title.indexOf("tag:mutating")
     const toolIdx = title.indexOf("tool:bash")
     const defaultIdx = title.indexOf("default:<default>")
     expect(aspectIdx).toBeGreaterThan(0)
@@ -572,12 +573,12 @@ describe("buildPolicyAskTitle", () => {
   it("renders the [shadowed] status icon (not [suppressed]) for shadowed rules", () => {
     const title = buildPolicyAskTitle({
       toolName: "bash",
-      effectiveTags: ["execution"],
+      effectiveTags: ["mutating"],
       currentMode: "default",
       input: { command: "ls" },
       toolMeta: undefined,
       cwd: "/repo",
-      ruleTrail: [{ layer: "tag", key: "execution", verdict: "ask", status: "shadowed" }],
+      ruleTrail: [{ layer: "tag", key: "mutating", verdict: "ask", status: "shadowed" }],
     })
     expect(title).toContain("[shadowed]")
     expect(title).not.toContain("[suppressed]")
@@ -642,14 +643,14 @@ describe("dumpToolMetadata", () => {
     const result: AggregateResult = {
       metadata: new Map<string, ResolvedToolMetadata>(),
       discovered: {
-        bash: { tags: ["execution"], aspects: { bash_cmd: { mode: "bash", fields: ["command"] } } },
+        bash: { tags: [], aspects: { bash_cmd: { mode: "bash", fields: ["command"] } } },
         ripgrep: { tags: ["readonly"], aspects: { path: { mode: "path", fields: ["paths"] } } },
       },
       warnings: [],
     }
     const out = dumpToolMetadata(result)
     const parsed = JSON.parse(out) as Record<string, { tags: string[] }>
-    expect(parsed.bash?.tags).toEqual(["execution"])
+    expect(parsed.bash?.tags).toEqual([])
     expect(parsed.ripgrep?.tags).toEqual(["readonly"])
     // Does NOT include the merged `metadata` map or the warnings array.
     expect(out).not.toContain('"metadata"')
@@ -773,6 +774,124 @@ describe("dumpTools", () => {
     const out = dumpTools(sampleTools, ["bash", "ripgrep"])
     const parsed = JSON.parse(out) as { enabled: boolean }[]
     expect(parsed.every((t) => t.enabled)).toBe(true)
+  })
+})
+
+describe("buildToolsList", () => {
+  const sampleTools: ToolInfo[] = [
+    {
+      name: "ripgrep",
+      description: "rg",
+      parameters: { type: "object" } as never,
+      sourceInfo: {
+        path: "/repo/packages/pi-ripgrep/src/extensions/ripgrep.ts",
+        source: "ripgrep-pkg",
+        scope: "project",
+        origin: "package",
+      },
+    },
+    {
+      name: "bash",
+      description: "shell",
+      parameters: { type: "object" } as never,
+      sourceInfo: { path: "/builtins/bash", source: "builtin", scope: "user", origin: "top-level" },
+    },
+    {
+      name: "absent",
+      description: "uninstalled",
+      parameters: { type: "object" } as never,
+      sourceInfo: { path: "/builtins/absent", source: "builtin", scope: "user", origin: "top-level" },
+    },
+  ]
+
+  it("returns one entry per tool, sorted by name", () => {
+    const list = buildToolsList(sampleTools, ["bash", "ripgrep"])
+    expect(list.map((o) => o.value)).toEqual(["absent", "bash", "ripgrep"])
+  })
+
+  it("appends ' (disabled)' to inactive tools and nothing to active ones", () => {
+    const list = buildToolsList(sampleTools, ["bash"])
+    const absent = list.find((o) => o.value === "absent")
+    const bash = list.find((o) => o.value === "bash")
+    const ripgrep = list.find((o) => o.value === "ripgrep")
+    expect(absent?.label).toBe("absent (disabled)")
+    expect(bash?.label).toBe("bash")
+    expect(ripgrep?.label).toBe("ripgrep (disabled)")
+  })
+
+  it("marks every tool as enabled when activeTools includes all of them", () => {
+    const list = buildToolsList(sampleTools, ["bash", "ripgrep", "absent"])
+    expect(list.every((o) => !o.label.endsWith("(disabled)"))).toBe(true)
+  })
+
+  it("returns an empty list when there are no tools", () => {
+    expect(buildToolsList([], [])).toEqual([])
+  })
+})
+
+describe("formatToolDetail", () => {
+  const builtinTool: ToolInfo = {
+    name: "bash",
+    description: "shell",
+    parameters: { type: "object", properties: { command: { type: "string" } } } as never,
+    sourceInfo: { path: "/builtins/bash", source: "builtin", scope: "user", origin: "top-level" },
+  }
+  const packageTool: ToolInfo = {
+    name: "ripgrep",
+    description: "rg",
+    parameters: { type: "object" } as never,
+    sourceInfo: {
+      path: "/repo/packages/pi-ripgrep/src/extensions/ripgrep.ts",
+      source: "ripgrep-pkg",
+      baseDir: "/repo/packages/pi-ripgrep",
+      scope: "project",
+      origin: "package",
+    },
+  }
+
+  it("renders the built-in short form (two lines, no path/baseDir/scope)", () => {
+    const out = formatToolDetail(builtinTool, true)
+    expect(out).toBe("built-in\nenabled: true")
+  })
+
+  it("renders 'enabled: false' for a disabled built-in", () => {
+    const out = formatToolDetail(builtinTool, false)
+    expect(out).toBe("built-in\nenabled: false")
+  })
+
+  it("renders the package short form (five lines: package, enabled, baseDir, path, scope)", () => {
+    const out = formatToolDetail(packageTool, true)
+    expect(out).toBe(
+      [
+        "package: ripgrep-pkg",
+        "enabled: true",
+        "baseDir: /repo/packages/pi-ripgrep",
+        "path: /repo/packages/pi-ripgrep/src/extensions/ripgrep.ts",
+        "scope: project",
+      ].join("\n"),
+    )
+  })
+
+  it("renders 'enabled: false' for a disabled package tool", () => {
+    const out = formatToolDetail(packageTool, false)
+    expect(out.split("\n")[1]).toBe("enabled: false")
+  })
+
+  it("falls back to the JSON dump for tools that are neither built-in nor package", () => {
+    // origin=top-level but source != "builtin" — a hypothetical third
+    // shape. Falls through to the JSON projection.
+    const oddTool: ToolInfo = {
+      name: "odd",
+      description: "weird",
+      parameters: { type: "object" } as never,
+      sourceInfo: { path: "/weird/odd", source: "odd-source", scope: "temporary", origin: "top-level" },
+    }
+    const out = formatToolDetail(oddTool, true)
+    const parsed = JSON.parse(out) as { name: string; enabled: boolean; sourceInfo: { source: string } }[]
+    expect(parsed).toHaveLength(1)
+    expect(parsed[0]?.name).toBe("odd")
+    expect(parsed[0]?.enabled).toBe(true)
+    expect(parsed[0]?.sourceInfo.source).toBe("odd-source")
   })
 })
 
