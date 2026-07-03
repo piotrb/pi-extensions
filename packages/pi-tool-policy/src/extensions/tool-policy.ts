@@ -13,6 +13,7 @@ import { loadConfig, STOCK_CONFIG } from "../lib/permission-config.ts"
 import { addAspectRule, addToolRule } from "../lib/permission-writer.ts"
 import { evaluate } from "../lib/policy.ts"
 import { buildDenyReason } from "../lib/policy.ts"
+import { resolveMode } from "../lib/resolve-mode.ts"
 import { RuntimeGrants } from "../lib/runtime-grants.ts"
 import { applyTaggerRules } from "../lib/tagging-rules.ts"
 import { type AggregateResult, aggregateToolMetadata } from "../lib/tool-metadata.ts"
@@ -205,10 +206,34 @@ export default function (pi: ExtensionAPI): void {
 
       // 3. Per-mode single-pass matcher. Apply runtime grants to the active
       // mode so an "allow for session" choice in the ask modal takes effect.
+      //
+      // The loader (Unit 3b) returns the merged `Config` with `extends`
+      // intact on every mode — resolution is a consumer-side projection,
+      // not a loader side effect. We call `resolveMode` here so the
+      // matcher sees the resolved `Mode` (parent fields deep-merged,
+      // `extends` stripped). Without this call, the matcher's tag-rules
+      // lookup only sees the active mode's own fields; inherited rules
+      // (e.g. `readonly: "allow"` on the `default` mode's chain through
+      // `readonly`) are missed and the verdict falls through to
+      // `defaultDecision` ("ask"). User-visible symptom: an unwanted
+      // ask prompt on `read` in `default` mode.
+      //
+      // `resolveMode` is the only place in the runtime where the
+      // inheritance chain is applied; the loader's
+      // `inventoryWarnings(merged)` still surfaces cycle / unknown-mode
+      // warnings without mutating modes.
       const currentMode = modeController.getMode()
-      const baseMode = config.modes[currentMode]
-      if (!baseMode) {
+      const { mode: baseMode, warnings: modeResolveWarnings } = resolveMode(currentMode, config)
+      // `resolveMode` returns a safe-default mode when `currentMode`
+      // is not in the config (e.g. a stale value). Surface that as
+      // a deny so the matcher doesn't run with an unexpected shape.
+      if (!config.modes[currentMode]) {
         return { block: true, reason: `Unknown mode: ${currentMode}` }
+      }
+      // Surface per-call resolution warnings (cycle in the active
+      // chain, unknown-`extends`) via the status bar; non-blocking.
+      if (modeResolveWarnings.length > 0) {
+        ctx.ui.setStatus("tool-policy-mode-warnings", modeResolveWarnings.join("\n"))
       }
       const activeMode = runtimeGrants.applyFor(currentMode, baseMode)
       const configForEval: Config = { ...config, modes: { ...config.modes, [currentMode]: activeMode } }

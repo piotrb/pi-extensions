@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 
 import { matchAspect } from "./aspects.ts"
 import { buildDenyReason, evaluate } from "./policy.ts"
+import { resolveMode } from "./resolve-mode.ts"
 import type { AspectRule, Config, ResolvedToolMetadata, Verdict } from "./types.ts"
 
 // Minimal mock — we only read event.toolName and event.input
@@ -1012,5 +1013,157 @@ describe("buildDenyReason", () => {
       userReason: "",
     })
     expect(reason).toContain('Reason from the rule: "configured"')
+  })
+})
+
+/**
+ * These tests pin the post-Unit-3b invariant: the loader returns the
+ * merged config with `extends` intact on every mode. The matcher
+ * (`evaluate`) operates on a `Mode` produced by the consumer calling
+ * `resolveMode(name, config)` — NOT on the raw config-as-loaded.
+ *
+ * Without the resolve-on-consumer step, the matcher's
+ * `mode.tagRules[tag]` lookup misses inherited rules (e.g. `edit`'s
+ * own tagRules is just `{ mutating: "allow" }`; the `readonly`,
+ * `metadata`, `execution`, `network` rules live on `default` /
+ * `readonly` and are reached only via `resolveMode`).
+ *
+ * This is a regression test for Unit 7a's handler-side fix; if a
+ * future change bypasses `resolveMode`, these tests fail with
+ * "Expected: allow, Received: ask".
+ */
+describe("JIT consumer — resolveMode before evaluate", () => {
+  // Minimal stock-shaped config: each mode carries its `extends` field.
+  // The loader produces this shape; the matcher consumes the resolved
+  // form via `resolveMode(name, config)`.
+  const configWithExtends: Config = {
+    modeOrder: ["readonly", "default", "edit", "plan"],
+    modes: {
+      readonly: {
+        description: "permits readonly",
+        defaultDecision: "ask",
+        tagRules: { readonly: "allow", metadata: "allow" },
+        toolRules: {},
+        aspectRules: {},
+      },
+      default: {
+        description: "asks for mutating/execution/network",
+        extends: ["readonly"],
+        defaultDecision: "ask",
+        tagRules: { mutating: "ask", execution: "ask", network: "ask" },
+        toolRules: {},
+        aspectRules: {},
+      },
+      edit: {
+        description: "permits mutating",
+        extends: ["default"],
+        defaultDecision: "ask",
+        tagRules: { mutating: "allow" },
+        toolRules: {},
+        aspectRules: {},
+      },
+      plan: {
+        description: "denies everything",
+        extends: ["readonly"],
+        defaultDecision: "deny",
+        tagRules: {
+          mutating: "deny",
+          execution: "deny",
+          network: "deny",
+        },
+        toolRules: {},
+        aspectRules: {},
+      },
+    },
+    allowedPaths: [],
+    taggingRules: [],
+    toolMetadata: {
+      read: { tags: ["readonly"], aspects: { path: { mode: "path", fields: ["path"] } } },
+    },
+  }
+  const readToolMeta = new Map<string, ResolvedToolMetadata>([
+    ["read", { tags: ["readonly"], fields: { path: { mode: "path", fields: ["path"] } } }],
+  ])
+
+  // Helper: simulate the JIT-consumer pattern as Unit 7a's handler will.
+  function evaluateAfterResolve(modeName: string, toolName: string, input: Record<string, unknown>, tags: string[]) {
+    const { mode } = resolveMode(modeName, configWithExtends)
+    const evalConfig: Config = {
+      ...configWithExtends,
+      modes: { ...configWithExtends.modes, [modeName]: mode },
+    }
+    return evaluate(makeEvent(toolName, input), evalConfig, modeName, tags, readToolMeta, ctx)
+  }
+
+  it("edit-mode read (readonly tag) is allowed (resolved edit inherits readonly:allow)", () => {
+    // Pre-Unit-3b behavior: edit's tagRules for "readonly" = "allow"
+    // (inherited from default → readonly). After Unit 3b without
+    // resolve-on-consumer, the raw edit mode has tagRules =
+    // { mutating: "allow" } only; tagRules[readonly] = undefined;
+    // the verdict falls through to defaultDecision ("ask") —
+    // which is exactly what the user is reporting on reload.
+    const decision = evaluateAfterResolve("edit", "read", { path: "/repo/foo.ts" }, ["readonly"])
+    expect(decision.action).toBe("allow")
+  })
+
+  it("default-mode bash (execution tag) asks (resolved default inherits execution:ask)", () => {
+    const bashMeta = new Map<string, ResolvedToolMetadata>([
+      ["bash", { tags: ["execution"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }],
+    ])
+    const { mode } = resolveMode("default", configWithExtends)
+    const evalConfig: Config = {
+      ...configWithExtends,
+      modes: { ...configWithExtends.modes, default: mode },
+    }
+    const decision = evaluate(
+      makeEvent("bash", { command: ["ls"] }),
+      evalConfig,
+      "default",
+      ["execution"],
+      bashMeta,
+      ctx,
+    )
+    expect(decision.action).toBe("ask")
+  })
+
+  it("plan-mode bash (execution tag) denies (resolved plan has execution:deny)", () => {
+    const bashMeta = new Map<string, ResolvedToolMetadata>([
+      ["bash", { tags: ["execution"], fields: { bash_cmd: { mode: "bash", fields: ["command"] } } }],
+    ])
+    const { mode } = resolveMode("plan", configWithExtends)
+    const evalConfig: Config = {
+      ...configWithExtends,
+      modes: { ...configWithExtends.modes, plan: mode },
+    }
+    const decision = evaluate(makeEvent("bash", { command: ["ls"] }), evalConfig, "plan", ["execution"], bashMeta, ctx)
+    expect(decision.action).toBe("deny")
+  })
+
+  // ─── regression pin: raw JIT-mode passed to evaluate without
+  // resolveMode produces the wrong verdict. The handler at
+  // `tool_call` (Unit 7a's recipe) must call `resolveMode(currentMode, config)`
+  // before `evaluate`. If a future change bypasses that call, these
+  // tests fail: the user observes `ask` prompts on `read` in
+  // `default` mode even though `readonly: "allow"` is configured.
+  it("REGRESSION: read in raw default mode (no resolveMode) → ask (the bug)", () => {
+    // No resolveMode call. The matcher's tagRules["readonly"] lookup
+    // misses because the raw `default` mode's tagRules is only
+    // { mutating, execution, network }. The matcher falls through
+    // to defaultDecision ("ask"). This is the bug.
+    const decision = evaluate(
+      makeEvent("read", { path: "/repo/foo.ts" }),
+      configWithExtends,
+      "default",
+      ["readonly"],
+      readToolMeta,
+      ctx,
+    )
+    // Pre-fix the verdict is "ask". With the handler fix
+    // (Unit 7a's `resolveMode(currentMode, config)` wrapper), the
+    // resolved default's tagRules.readonly = "allow" and the
+    // verdict becomes "allow". The pin documents the broken
+    // shape: any caller that forgets to call resolveMode here
+    // gets "ask" instead of "allow" for read in default mode.
+    expect(decision.action).toBe("ask")
   })
 })
