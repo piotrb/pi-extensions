@@ -46,6 +46,7 @@ import {
   SOURCE_LABELS,
 } from "../lib/rules.ts"
 import { loadSettings, saveSettings, type Settings } from "../lib/settings.ts"
+import { startStreamingWidget, useStreamingWidget, WIDGET_KEY } from "../lib/streaming-widget.ts"
 
 /** Status-bar key for the current model indicator. */
 const STATUS_KEY = "do-it-right-model"
@@ -113,24 +114,61 @@ export default function (pi: ExtensionAPI): void {
     // ── evaluate ───────────────────────────────────────────────────────
     ctx.ui.setStatus(STATUS_KEY, `gate: querying ${model.provider}/${model.id}…`)
     const auth = await resolveAuth(ctx, model)
+
+    // The streaming widget gives the user a live view of what the
+    // model is thinking/responding during the gate. `useStreamingWidget`
+    // is the single branch point — flipping it to `false` here disables
+    // the widget for both this live path AND the Test Evaluation path.
+    // The status bar stays the same regardless.
+    const streaming = useStreamingWidget() ? startStreamingWidget(command, ctx) : null
+
     let result: { ok: boolean; reason: string }
     try {
-      result = await evaluateStream(rules, command, model, { signal: ctx.signal, ...(auth ?? {}) }, (event) => {
-        switch (event.type) {
-          case "thinking_start":
-          case "thinking_delta":
-            ctx.ui.setStatus(STATUS_KEY, `gate: ${model.provider}/${model.id} (thinking)…`)
-            break
-          case "text_delta":
-            ctx.ui.setStatus(STATUS_KEY, `gate: ${model.provider}/${model.id} (responding)…`)
-            break
-          default:
-            break
-        }
-      })
+      result = await evaluateStream(
+        rules,
+        command,
+        model,
+        { signal: ctx.signal, ...(auth ?? {}) },
+        // Status-bar phase updates (`querying…` → `thinking…` →
+        // `responding…`) run alongside the widget's own onEvent
+        // callback when the widget is enabled; when it isn't, the
+        // same status-only callback drives the user-visible signal.
+        streaming
+          ? (event) => {
+              streaming.onEvent(event)
+              switch (event.type) {
+                case "thinking_start":
+                case "thinking_delta":
+                  ctx.ui.setStatus(STATUS_KEY, `gate: ${model.provider}/${model.id} (thinking)…`)
+                  break
+                case "text_delta":
+                  ctx.ui.setStatus(STATUS_KEY, `gate: ${model.provider}/${model.id} (responding)…`)
+                  break
+                default:
+                  break
+              }
+            }
+          : (event) => {
+              switch (event.type) {
+                case "thinking_start":
+                case "thinking_delta":
+                  ctx.ui.setStatus(STATUS_KEY, `gate: ${model.provider}/${model.id} (thinking)…`)
+                  break
+                case "text_delta":
+                  ctx.ui.setStatus(STATUS_KEY, `gate: ${model.provider}/${model.id} (responding)…`)
+                  break
+                default:
+                  break
+              }
+            },
+      )
     } catch (err) {
       failOpen(`evaluate failed (fail-open): ${err instanceof Error ? err.message : String(err)}`)
       refreshStatusBar(ctx, cached)
+      // Drop any partial widget state on the fail-open path so the
+      // user doesn't see a half-rendered gate after we've decided
+      // we're letting the call through unchanged.
+      streaming?.clear()
       return undefined
     }
     if (result.ok) {
@@ -138,6 +176,11 @@ export default function (pi: ExtensionAPI): void {
       // indicator. Without the brief flash, the user can't tell the
       // gate ran — the bash tool just resumes normally.
       ctx.ui.setStatus(STATUS_KEY, `gate: ${model.provider}/${model.id} — allow`)
+      // Widget and status-bar clear after the same interval so allow
+      // and block paths feel symmetric — the user sees the verdict
+      // indicator + reasoning for the same duration regardless of
+      // outcome.
+      streaming?.finish("allow", result.reason, 1500)
       setTimeout(() => {
         refreshStatusBar(ctx, cached)
       }, 1500)
@@ -149,6 +192,10 @@ export default function (pi: ExtensionAPI): void {
     // long; collapsing it to the first line keeps the status bar
     // readable while still telling the user WHY the gate tripped.
     ctx.ui.setStatus(STATUS_KEY, `gate: ${model.provider}/${model.id} — block: ${firstLine(result.reason)}`)
+    // Block keeps the widget visible longer than allow — a blocked
+    // call deserves a beat for the user to read WHY before it
+    // disappears.
+    streaming?.finish("block", result.reason, 4000)
     setTimeout(() => {
       refreshStatusBar(ctx, cached)
     }, 4000)
@@ -618,100 +665,64 @@ async function runTestEvaluation(ctx: ExtensionCommandContext, cached: CachedSta
   const command = await ctx.ui.input("Test the gate against a command", "bash command")
   if (!command) return
 
-  // Streaming widget so the user can see what the model is producing.
-  // Layout:
-  //   $ <command>
-  //   (blank)
-  //   > <latest thinking text, truncated>
-  //   (during a thinking block: the in-progress buffer)
-  //   <text deltas, accumulated>
-  // When the stream finishes, the verdict is appended and a notify
-  // carries the short form.
-  const WIDGET_KEY = "do-it-right-eval"
-
-  const THINKING_LIMIT = 1000
-  const truncate = (s: string): string => (s.length > THINKING_LIMIT ? `…${s.slice(-THINKING_LIMIT)}` : s)
-
-  let thinkingBuffer = ""
-  let completedThinking = ""
-  let textBuffer = ""
-
-  const render = (): void => {
-    const lines: string[] = [`$ ${command}`, ""]
-    if (thinkingBuffer || completedThinking) {
-      lines.push(`[thinking] ${truncate(thinkingBuffer || completedThinking)}`)
-    }
-    // The model streams text as a single string with embedded newlines.
-    // Split on every newline so each line becomes its own widget entry
-    // — otherwise the verdict (which is two sections separated by blank
-    // lines) would render as one mangled block in the widget.
-    if (textBuffer) {
-      const buffered = textBuffer.split("\n")
-      for (const line of buffered) {
-        // `split` yields an empty trailing entry when the buffer ends
-        // with a newline; drop it so the widget doesn't grow a stray
-        // blank line on every render.
-        if (line.length === 0 && buffered[buffered.length - 1] === line) continue
-        lines.push(line)
-      }
-    }
-    ctx.ui.setWidget(WIDGET_KEY, lines)
-  }
-  render()
+  // Streaming widget so the user can watch the model reason. Same
+  // helper as the live `tool_call` gate — see `streaming-widget.ts`.
+  // The Test Evaluation path leaves the widget on screen until the
+  // user dismisses it manually; the notify carries the short-form
+  // verdict. We pass Number.MAX_SAFE_INTEGER to `finish`'s clear
+  // timer so it effectively never clears — the widget survives
+  // until the next `setWidget(…, undefined)` from a subsequent call.
+  const streaming = useStreamingWidget() ? startStreamingWidget(command, ctx) : null
+  // First render so the widget is visible before the first event
+  // arrives (otherwise the user sees a flash of no widget, then the
+  // widget appears at first delta — distracting). We render with a
+  // single "thinking…" placeholder so the slot is occupied.
+  if (streaming) ctx.ui.setWidget(WIDGET_KEY, [`$ ${command}`, "", "[thinking] …"])
 
   let result: { ok: boolean; reason: string }
   try {
     const auth = await resolveAuth(ctx, model)
-    result = await evaluateStream(rules, command, model, { signal: ctx.signal, ...(auth ?? {}) }, (event) => {
-      switch (event.type) {
-        case "thinking_start":
-          // A new block starts. Clear the in-progress buffer.
-          thinkingBuffer = ""
-          render()
-          break
-        case "thinking_delta":
-          thinkingBuffer += event.delta
-          render()
-          break
-        case "thinking_end":
-          // Block finished — fold into the "completed thinking"
-          // display so we keep the most recent reasoning on screen
-          // even if more blocks follow.
-          completedThinking = thinkingBuffer
-          thinkingBuffer = ""
-          render()
-          break
-        case "text_delta":
-          textBuffer += event.delta
-          render()
-          break
-        // text_start, text_end, toolcall_*: ignored. The gate doesn't
-        // pass tools, so tool_use would be an anomaly.
-        default:
-          break
-      }
-    })
+    result = await evaluateStream(
+      rules,
+      command,
+      model,
+      { signal: ctx.signal, ...(auth ?? {}) },
+      // The widget's onEvent is the only consumer of the stream —
+      // this path doesn't drive a status bar (the user is looking at
+      // a modal, not the gate's normal UI surface). When the widget
+      // is disabled, fall back to a no-op callback — the verdict
+      // notification alone is the user signal.
+      streaming
+        ? streaming.onEvent
+        : (): void => {
+            /* widget disabled; verdict is conveyed via notify */
+          },
+    )
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    // Keep the widget on screen with whatever streamed in so the user
-    // can see what the model was doing when the failure happened.
-    // Append the failure and re-render; the notify carries the short form.
-    textBuffer = (textBuffer ? textBuffer + "\n\n" : "") + `[error] ${msg}`
-    render()
+    // Keep whatever streamed in the widget so the user can see what
+    // the model was doing when it failed. The notify carries the
+    // short form.
+    ctx.ui.setWidget(WIDGET_KEY, [`$ ${command}`, "", `[error] ${msg}`])
     ctx.ui.notify(`do-it-right: evaluation failed — see widget; ${msg}`, "error")
+    streaming?.clear()
     return
   }
 
-  // Show the verdict in the widget for a beat, then drop it. A notify
-  // carries the short form; the widget was for live observation.
-  // The verdict marker sits on its own line; the reason (now a two-
-  // section shape with blank-line separators) follows on its own lines.
-  // Splitting at the boundary keeps the widget readable — a one-line
-  // marker followed by the structured reason, each line as its own
-  // widget entry.
-  const marker = result.ok ? `✓ would allow` : `✗ would block`
-  textBuffer = (textBuffer ? textBuffer + "\n\n" : "") + `${marker}\n${result.reason}`
-  render()
+  // Verdict on screen until the user dismisses it (a subsequent
+  // widget write or `/do-it-right` re-run replaces it). The notify
+  // is the short-form signal.
+  if (streaming) {
+    streaming.finish(
+      result.ok ? "allow" : "block",
+      result.reason,
+      // Effectively infinite — the widget survives until the next
+      // `setWidget` call replaces it. 1 day is well outside any
+      // sensible user session length and avoids the "never fires"
+      // readability that `Number.MAX_SAFE_INTEGER` has.
+      24 * 60 * 60 * 1000,
+    )
+  }
 
   if (result.ok) {
     ctx.ui.notify(`do-it-right: would allow — ${result.reason}`, "info")
