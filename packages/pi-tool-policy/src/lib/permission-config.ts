@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 
 import type { ConfigLayers } from "./modal/debug-modal.ts"
+import { resolveMode } from "./resolve-mode.ts"
 import { deepMergeToolMetadata } from "./tool-metadata.ts"
 import { type AllowedPath, type Config, type Mode, type ToolMetadata } from "./types.ts"
 
@@ -229,65 +230,6 @@ function mergeToolMetadata(
   return out
 }
 
-function detectExtendsCycles(modes: Record<string, Mode>, warnings: string[]): void {
-  const visited = new Set<string>()
-  const stack = new Set<string>()
-  function dfs(name: string, path: string[]): void {
-    if (stack.has(name)) {
-      warnings.push(`Cycle in extends graph: ${[...path, name].join(" → ")} → ${name}`)
-      return
-    }
-    if (visited.has(name)) return
-    visited.add(name)
-    stack.add(name)
-    const m = modes[name]
-    if (m?.extends) {
-      for (const ext of m.extends) {
-        dfs(ext, [...path, name])
-      }
-    }
-    stack.delete(name)
-  }
-  for (const name of Object.keys(modes)) {
-    dfs(name, [])
-  }
-}
-
-function resolveExtends(modes: Record<string, Mode>, warnings: string[]): Record<string, Mode> {
-  detectExtendsCycles(modes, warnings)
-  const resolved: Record<string, Mode> = {}
-  function resolve(name: string, visiting = new Set<string>()): Mode {
-    if (resolved[name]) return resolved[name]
-    if (visiting.has(name)) {
-      // Cycle: leave the offending mode partially resolved.
-      warnings.push(`Cycle detected while resolving mode ${name}; leaving as-is`)
-      return modes[name]!
-    }
-    visiting.add(name)
-    const m = modes[name]!
-    let merged = m
-    if (m.extends) {
-      for (const ext of m.extends) {
-        if (!(ext in modes)) {
-          warnings.push(`Mode ${name} extends unknown mode ${ext}; treating as base`)
-          continue
-        }
-        const parent = resolve(ext, visiting)
-        merged = deepMergeMode(parent, merged)
-      }
-    }
-    // After deep-merge, drop the `extends` field (it was applied).
-    const { extends: _e, ...rest } = merged
-    resolved[name] = rest
-    visiting.delete(name)
-    return rest
-  }
-  for (const name of Object.keys(modes)) {
-    resolve(name)
-  }
-  return resolved
-}
-
 /**
  * Walk every mode's regex-aspect rules and try to compile every pattern
  * as a RegExp. Push a warning for any pattern that throws. Scoped to
@@ -370,8 +312,15 @@ export async function loadConfig(cwd: string): Promise<LoadedConfig> {
   // in the modal instead of silently disabling the rule.
   validateAspectPatterns(merged.modes, warnings)
 
-  // Resolve extends with cycle detection.
-  merged.modes = resolveExtends(merged.modes, warnings)
+  // Resolve extends per-mode via the standalone resolver. Cycles,
+  // unknown-`extends`, and unknown-mode cases each push a warning;
+  // the resolved mode is always safe for the matcher to consume
+  // (extends stripped, tagRules/toolRules/aspectRules populated).
+  for (const name of Object.keys(merged.modes)) {
+    const resolved = resolveMode(name, merged)
+    merged.modes[name] = resolved.mode
+    for (const w of resolved.warnings) warnings.push(w)
+  }
 
   // Resolve project-level relative allowedPaths to absolute.
   merged.allowedPaths = merged.allowedPaths.map((entry) => resolveAllowedPath(entry, cwd))
