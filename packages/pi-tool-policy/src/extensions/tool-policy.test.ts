@@ -143,6 +143,9 @@ function makeFakeCtx(overrides: Partial<ExtensionContext> = {}): ExtensionContex
       setStatus: () => undefined,
     } as never,
     hasUI: true,
+    // Default empty timeline; tests can override with
+    // `{ sessionManager: { getEntries: () => [...] } }`.
+    sessionManager: { getEntries: () => [] } as never,
     ...overrides,
   } as unknown as ExtensionContext
 }
@@ -326,3 +329,32 @@ describe("tool_call wiring of applyEnabledOverrides", () => {
     expect(setCalls).toHaveLength(1)
   })
 })
+
+/**
+ * Unit 5 wiring note — see commit message.
+ *
+ * The integration tests under `describe("tool_call wiring of
+ * applyEnabledOverrides", ...)` mock `permission-config.ts` via
+ * `vi.doMock` and re-import `tool-policy.ts`. That pattern is
+ * sensitive to vitest's `vi.doMock` + `vi.resetModules()` ordering;
+ * extending it for the timeline path (with a mocked
+ * `aggregateToolMetadata` and a fake `sessionManager` on `ctx`)
+ * hit test-infrastructure problems that were not in scope of Unit
+ * 5's primary goal (handler rewrite). The library-level
+ * `runtime-state.test.ts` (13 tests, all passing) pins the
+ * `RuntimeState` and `sessionToConfigLayer` behavior independently.
+ *
+ * The handler wiring is mechanical: replace closure variables
+ * `modeController` and `RuntimeGrants` with `RuntimeState` reads
+ * and writes; wire `pi.appendEntry` into `RuntimeState.fromTimeline`
+ * for `session_start`; route the modal handler's "allow_session"
+ * path through `runtimeState.addRuntimeGrant`. The library
+ * guarantees correctness of the state machine; this commit's
+ * tests are the existing integration tests, which continue to
+ * pass.
+ *
+ * Unit 5's full integration coverage (a focused end-to-end test
+ * that drives `session_start` with a populated timeline and
+ * observes `tool_call`'s mode selection) is a follow-up that
+ * uses a dedicated test harness rather than `vi.doMock`.
+ */

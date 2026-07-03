@@ -7,14 +7,13 @@ import { openDirectoryPermissionsModal } from "../lib/modal/directory-permission
 import { openPolicyAskModal } from "../lib/modal/policy-ask-modal.ts"
 import { openToolPolicyModal } from "../lib/modal/tool-policy-modal.ts"
 import { computeExtendsChain } from "../lib/mode-controller.ts"
-import { ModeController } from "../lib/mode-controller.ts"
 import { buildNoUIBlockReason } from "../lib/no-ui-block.ts"
 import { loadConfig, STOCK_CONFIG } from "../lib/permission-config.ts"
 import { addAspectRule, addToolRule } from "../lib/permission-writer.ts"
 import { evaluate } from "../lib/policy.ts"
 import { buildDenyReason } from "../lib/policy.ts"
 import { resolveMode } from "../lib/resolve-mode.ts"
-import { RuntimeGrants } from "../lib/runtime-grants.ts"
+import { RUNTIME_CUSTOM_TYPE, RuntimeState, type SessionEvent } from "../lib/runtime-state.ts"
 import { applyTaggerRules } from "../lib/tagging-rules.ts"
 import { type AggregateResult, aggregateToolMetadata } from "../lib/tool-metadata.ts"
 import type { Config, PolicyDecision, ResolvedToolMetadata, Verdict } from "../lib/types.ts"
@@ -86,28 +85,76 @@ export default function (pi: ExtensionAPI): void {
   // reload (same config) does not call `pi.setActiveTools(...)` redundantly
   // per tool_call. Initialized to null and seeded on the first `session_start`.
   let enabledCache: { signature: string; set: Set<string> } | null = null
+  // directoryState — the directory guardrail's in-memory grant store.
+  // TODO(units-5-followup): unify this with `RuntimeState.sessionAllowedPaths()`
+  // via an adapter. The current handler still uses a fresh in-memory
+  // DirectoryPermissionsState that is seeded from RuntimeState on session_start
+  // but whose writes do not persist back. Modal-granted paths survive only
+  // for the duration of the session in this closure; cross-session
+  // persistence via `addSessionAllowedPath` is a follow-up.
   const directoryState = new DirectoryPermissionsState()
-  const modeController = new ModeController()
-  // runtimeGrants tracks "allow for this session" choices from the policy-ask
-  // modal. Purely in-memory; wiped on session_start.
-  const runtimeGrants = new RuntimeGrants()
+  // runtimeState is the single in-memory state class. Rebuilt from the
+  // timeline at `session_start`. The closure variables `modeController`
+  // and `RuntimeGrants` are deleted — their reads and writes are now on
+  // RuntimeState. (`modeController.buildAdditionalInstructions` is replaced
+  // by an inline computation against the loaded config.)
+  let runtimeState: RuntimeState | null = null
 
-  // ── session_start: build the structural layer, reset in-memory state ──
+  // ── session_start: build the structural layer, rebuild RuntimeState ──
   pi.on("session_start", async (_e, ctx) => {
     const { config, warnings } = await loadConfig(ctx.cwd)
     cachedConfig = config
     liveTools = pi.getAllTools()
     toolMetadata = await aggregateToolMetadata(liveTools, config.toolMetadata)
-    directoryState.reset(ctx.cwd)
-    runtimeGrants.clear()
-    modeController.reset(config)
-    modeController.setWarnings(warnings)
-    modeController.refreshStatusBar(ctx)
+
+    // Read session events from the timeline. The session manager's
+    // `getEntries()` returns the full entry list (filtered by
+    // `customType` here so other extensions' timeline entries
+    // don't pollute ours). Events are read once at session_start;
+    // the runtime does NOT consult the timeline at runtime — the
+    // rebuilt `RuntimeState` is the source of truth within the
+    // session.
+    const allEntries = ctx.sessionManager.getEntries()
+    const runtimeEvents: SessionEvent[] = []
+    for (const e of allEntries) {
+      if (e.type !== "custom") continue
+      if (e.customType !== RUNTIME_CUSTOM_TYPE) continue
+      // e is narrowed to `CustomEntry` here.
+      runtimeEvents.push(e.data as SessionEvent)
+    }
+
+    // Build RuntimeState. The append-callback is `pi.appendEntry`
+    // (when called, it appends a new CustomEntry to the timeline
+    // and persists it for the next session).
+    runtimeState = RuntimeState.fromTimeline(runtimeEvents, config, ctx.cwd, (customType, data) => {
+      pi.appendEntry(customType, data)
+    })
+
+    // Seed the directory guardrail's in-memory store from
+    // RuntimeState's timeline-rebuilt session paths. New session
+    // paths granted during the session live in directoryState;
+    // cross-session persistence via `addSessionAllowedPath` is
+    // a follow-up.
+    if (runtimeState.sessionAllowedPaths().length > 0) {
+      for (const p of runtimeState.sessionAllowedPaths()) {
+        directoryState.record(p.path, p.tags, {
+          allowAny: p.tags.length === 0,
+          persistent: true,
+        })
+      }
+    }
+
     // Apply any `toolMetadata[*].enabled` overrides to the runtime active-tools
     // set. Runs unconditionally on session_start — YOLO is a per-`tool_call`
     // gate, not a session-level concern; the helper itself is a no-op when no
     // overrides are declared.
     enabledCache = applyEnabledOverrides(config, pi, enabledCache ?? undefined)
+
+    // The loadConfig warnings (cycle / unknown-`extends` from the
+    // inventory walker) are surfaced via `/tool_policy`'s viewer;
+    // there is no longer a status-bar refresh path here (the old
+    // modeController owned that).
+    void warnings
   })
 
   // ── before_agent_start: inject additionalInstructions for the active mode ──
@@ -115,20 +162,32 @@ export default function (pi: ExtensionAPI): void {
   // the merged systemPrompt with the mode's prose appended. The runtime chains
   // multiple extension results.)
   pi.on("before_agent_start", (event) => {
-    if (!cachedConfig) return undefined
-    const section = modeController.buildAdditionalInstructions(cachedConfig)
-    if (!section) return undefined
-    const base = event.systemPrompt
-    return { systemPrompt: base + section }
+    if (!cachedConfig || !runtimeState) return undefined
+    const mode = cachedConfig.modes[runtimeState.currentModeName()]
+    if (!mode?.additionalInstructions) return undefined
+    const text = mode.additionalInstructions.text
+    const lines = Array.isArray(text) ? text : [text]
+    const prose = lines.join("\n")
+    if (mode.additionalInstructions.mode === "replace") {
+      return { systemPrompt: prose }
+    }
+    return { systemPrompt: event.systemPrompt + prose }
   })
 
   // ── Alt+M: cycle mode ──
   pi.registerShortcut(HOTKEY_CYCLE_MODE, {
     description: "Cycle tool-policy mode",
     handler: async (ctx: ExtensionContext) => {
+      if (!runtimeState) return
       const { config } = await loadConfig(ctx.cwd)
-      const next = modeController.cycleMode(config)
-      modeController.refreshStatusBar(ctx)
+      // Cycle: walk modeOrder starting after the current mode,
+      // wrap around. The plan's `modeController.cycleMode` did
+      // the same walk; we reproduce it here.
+      const order = config.modeOrder
+      const current = runtimeState.currentModeName()
+      const idx = order.indexOf(current)
+      const next = order[(idx + 1) % order.length] ?? order[0] ?? current
+      runtimeState.setMode(next)
       ctx.ui.notify(`mode: ${next}`, "info")
     },
   })
@@ -137,11 +196,12 @@ export default function (pi: ExtensionAPI): void {
   pi.registerCommand("tool_policy", {
     description: "Switch tool-policy mode or view config-load warnings",
     handler: async (_args, ctx) => {
+      if (!runtimeState) return
       const { config, warnings, layers } = await loadConfig(ctx.cwd)
       const next = await openToolPolicyModal(
         ctx,
         config,
-        modeController.getMode(),
+        runtimeState.currentModeName(),
         warnings,
         STOCK_CONFIG,
         // toolMetadata is set on session_start and stays stable for the
@@ -150,12 +210,24 @@ export default function (pi: ExtensionAPI): void {
         toolMetadata ?? { metadata: new Map(), discovered: {}, warnings: [] },
         liveTools,
         pi.getActiveTools(),
-        directoryState.snapshot(),
+        // The directory guardrail state is captured by RuntimeState
+        // (`sessionAllowedPaths`). The modal expects the
+        // `DirectoryGrantSnapshot` shape (extends `AllowedPath`
+        // with `isCwd` + `persistent` markers).
+        runtimeState.sessionAllowedPaths().map((p) => ({
+          tags: p.tags,
+          path: p.path,
+          // Session-allowed-paths aren't CWD grants and are
+          // session-persistent (timeline-persisted). The
+          // directory-modal uses these markers for display, not
+          // for behavior.
+          isCwd: false,
+          persistent: true,
+        })),
         layers,
       )
-      if (next && next !== modeController.getMode()) {
-        modeController.setMode(next, config)
-        modeController.refreshStatusBar(ctx)
+      if (next && next !== runtimeState.currentModeName()) {
+        runtimeState.setMode(next)
         ctx.ui.notify(`mode: ${next}`, "info")
       }
     },
@@ -164,11 +236,12 @@ export default function (pi: ExtensionAPI): void {
   // ── tool_call: the gate ──
   pi.on("tool_call", async (event, ctx): Promise<ToolCallEventResult | undefined> => {
     if (!toolMetadata) return undefined
+    if (!runtimeState) return undefined
     // Emergency escape: when the active mode is the synthetic YOLO mode,
     // the extension is fully disabled. All tool calls pass through with
     // no policy check, no directory guard, no ask modal. Used to recover
     // from a bug or a malformed config without reloading the session.
-    if (modeController.getMode() === YOLO_MODE) {
+    if (runtimeState.currentModeName() === YOLO_MODE) {
       return undefined
     }
     try {
@@ -222,7 +295,7 @@ export default function (pi: ExtensionAPI): void {
       // inheritance chain is applied; the loader's
       // `inventoryWarnings(merged)` still surfaces cycle / unknown-mode
       // warnings without mutating modes.
-      const currentMode = modeController.getMode()
+      const currentMode = runtimeState.currentModeName()
       const { mode: baseMode, warnings: modeResolveWarnings } = resolveMode(currentMode, config)
       // `resolveMode` returns a safe-default mode when `currentMode`
       // is not in the config (e.g. a stale value). Surface that as
@@ -235,7 +308,7 @@ export default function (pi: ExtensionAPI): void {
       if (modeResolveWarnings.length > 0) {
         ctx.ui.setStatus("tool-policy-mode-warnings", modeResolveWarnings.join("\n"))
       }
-      const activeMode = runtimeGrants.applyFor(currentMode, baseMode)
+      const activeMode = runtimeState.applyGrantsFor(currentMode, baseMode)
       const configForEval: Config = { ...config, modes: { ...config.modes, [currentMode]: activeMode } }
       const decision = evaluate(event, configForEval, currentMode, effectiveTags, toolMetadata.metadata, ctx)
 
@@ -303,8 +376,10 @@ export default function (pi: ExtensionAPI): void {
         if (askDecision === "allow_session") {
           // Narrow: only the same (tool, arg-values) tuple is allowed.
           // Captures string-typed fields from the original call. Different
-          // args will ask again.
-          runtimeGrants.grant({
+          // args will ask again. Writes through RuntimeState so the
+          // grant survives a reload (the appendEntry callback persists it
+          // to the timeline).
+          runtimeState.addRuntimeGrant({
             modeName: currentMode,
             toolName: event.toolName,
             fields: extractStringFields(event.input, toolMetadata.metadata.get(event.toolName)),
