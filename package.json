@@ -16,8 +16,8 @@
     "typecheck": "pnpm turbo typecheck",
     "lint": "eslint . --max-warnings=0 --cache --cache-location .eslintcache/",
     "lint:fix": "eslint . --fix --cache --cache-location .eslintcache/",
-    "format": "sh -c 'set -x; pnpm exec prettier --write \"${1:-.}\"' --",
-    "format:check": "sh -c 'set -x; pnpm exec prettier --check \"${1:-.}\"' --",
+    "format": "sh -c 'set -x; if [ $# -gt 0 ]; then pnpm exec prettier --write \"$@\"; else pnpm exec prettier --write .; fi' --",
+    "format:check": "sh -c 'set -x; if [ $# -gt 0 ]; then pnpm exec prettier --check \"$@\"; else pnpm exec prettier --check .; fi' --",
     "test": "pnpm turbo test",
     "test:workspace": "vitest run tests/",
     "check": "pnpm turbo //#format:check //#lint //#test:workspace typecheck test"
