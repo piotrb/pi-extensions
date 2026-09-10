@@ -42,6 +42,6 @@
     "typebox": "^1.1.38",
     "typescript": "5.9.3",
     "typescript-eslint": "^8.0.0",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.11"
   }
 }
