@@ -125,3 +125,4 @@ If a particular gate's verdicts are long, raise the revert time. If the user rep
 - `pi-lifecycle-hooks` — the `ctx.ui.notify` example in the lifecycle solution. The notify is a transient popup; the status bar is the persistent slot.
 - `pi-tool-policy-mode-controller` — `refreshStatusBar(ctx)` updates the mode indicator (`mode: <name> (Alt+M)`). The mode indicator is a different slot from the slow-call progress indicator; they coexist on the same bar with different keys.
 - `pi-do-it-right` — the reference implementation. The `tool_call` handler and `evaluateStream` are the live example.
+- **`streaming-widget-for-streaming-calls`** — the widget surface for the same problem family. The status bar (this solution) and the widget (the other) are complementary feedback surfaces, not exclusive choices. The live `pi-do-it-right` gate runs both: status bar for the persistent indicator, widget for the streaming reasoning.

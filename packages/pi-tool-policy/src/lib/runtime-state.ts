@@ -120,9 +120,47 @@ export class RuntimeState {
     return new RuntimeState(currentModeName, sessionAllowedPaths, runtimeGrants, appendEntry, config)
   }
 
-  /** Read: the active mode name. */
+  /**
+   * Read: the active mode name. */
   currentModeName(): string {
     return this._currentModeName
+  }
+
+  /**
+   * Project this runtime state as a session-layer `Config`.
+   *
+   * The session contributes two pieces of state to the merged
+   * config:
+   *
+   * - `modeOrder`: a single-entry array with the active mode name.
+   *   When `composeConfig` folds this onto the stock/user/project
+   *   order, dedup-with-first-occurrence keeps the active mode in
+   *   its stock position (or appends it at the end if the session
+   *   introduced a brand-new mode). The active-mode pointer is read
+   *   from `RuntimeState.currentModeName()`; `modeOrder` only
+   *   describes the cycle.
+   * - `allowedPaths`: a copy of `sessionAllowedPaths()` — the
+   *   set of paths the directory modal granted this session.
+   *   Merged via concat onto the loaded config's allowed paths.
+   *
+   * Every other field is the session's no-op contribution:
+   * `modes: {}`, `taggingRules: []`, `toolMetadata: {}`. The
+   * session doesn't author modes, tagger rules, or tool
+   * metadata — those come from the on-disk config only.
+   *
+   * This shape is a valid `Config` (every required field
+   * present). Pass it to `composeConfig(loaded.config,
+   * runtimeState.asSessionLayer())` to fold the session's
+   * overrides into the matched config.
+   */
+  asSessionLayer(): Config {
+    return {
+      modeOrder: [this._currentModeName],
+      allowedPaths: [...this._sessionAllowedPaths],
+      modes: {},
+      taggingRules: [],
+      toolMetadata: {},
+    }
   }
 
   /** Read: a copy of the granted session paths. */
@@ -239,17 +277,11 @@ function isPathInside(absPath: string, root: string): boolean {
  * for `composeConfig` (Unit 6) to layer on top of the on-disk
  * config. Pure: reads the timeline; does NOT touch it.
  *
- * Projected slices:
- * - `allowedPaths`: each `addSessionAllowedPath` event's entry.
- * - `modeOrder`: the most-recent `setMode` event's modeName
- *   as the new head; Unit 6 composes this with the on-disk
- *   modeOrder.
- *
- * Per-mode runtime grants are NOT projected here. They are
- * applied at consumer time via `RuntimeState.applyGrantsFor` —
- * the `Config` shape has no global `toolRules` field (tool
- * rules live per-mode), and the per-mode projection is a
- * different concern.
+ * NOTE: As of Unit 6, the canonical accessor is
+ * `RuntimeState.asSessionLayer()` (an instance method that returns
+ * a strict `Config`). This function is retained for test
+ * compatibility / debugging surfaces; new code should prefer the
+ * instance method.
  */
 export function sessionToConfigLayer(timeline: SessionEventTimeline, _config: Config, _cwd: string): Partial<Config> {
   const allowedPaths: AllowedPath[] = []

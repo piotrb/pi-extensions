@@ -45,7 +45,8 @@
   },
   "dependencies": {
     "@piotrb/pi-extension-utils": "workspace:*",
-    "picomatch": "^4.0.0"
+    "picomatch": "^4.0.0",
+    "ts-deepmerge": "^8.0.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

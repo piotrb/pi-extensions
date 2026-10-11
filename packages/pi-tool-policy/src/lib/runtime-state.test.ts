@@ -243,3 +243,83 @@ describe("sessionToConfigLayer", () => {
     expect(layer).toEqual({})
   })
 })
+
+describe("RuntimeState.asSessionLayer", () => {
+  // Session-layer tests cover the accessor that bridges
+  // `RuntimeState` (timeline events) → a strict-`Config` shape
+  // consumable by `composeConfig`. The session contributes two
+  // overrides (modeOrder head + allowedPaths) and no-ops the rest.
+  function makeEmptyState() {
+    return RuntimeState.fromTimeline([], makeConfig(), "/repo")
+  }
+
+  it("returns a full valid Config (every required field present)", () => {
+    const state = makeEmptyState()
+    const layer = state.asSessionLayer()
+    // Every required field is present, even the no-ops.
+    expect(layer).toHaveProperty("modeOrder")
+    expect(layer).toHaveProperty("modes")
+    expect(layer).toHaveProperty("allowedPaths")
+    expect(layer).toHaveProperty("taggingRules")
+    expect(layer).toHaveProperty("toolMetadata")
+  })
+
+  it("places the active mode name at the head of modeOrder", () => {
+    // Build a state with a setMode event for `plan`.
+    const config = makeConfig({ modeOrder: ["default", "readonly", "edit", "plan"] })
+    const state = RuntimeState.fromTimeline(
+      [{ type: "setMode", modeName: "plan", timestamp: "2026-07-01T00:00:00Z" }],
+      config,
+      "/repo",
+    )
+    const layer = state.asSessionLayer()
+    expect(layer.modeOrder).toEqual(["plan"])
+  })
+
+  it("includes granted session paths in allowedPaths", () => {
+    const config = makeConfig()
+    const state = RuntimeState.fromTimeline(
+      [
+        {
+          type: "addSessionAllowedPath",
+          entry: { tags: ["mutating"], path: "/repo/src" },
+          timestamp: "2026-07-01T00:00:00Z",
+        },
+        {
+          type: "addSessionAllowedPath",
+          entry: { tags: ["readonly"], path: "/etc/hosts" },
+          timestamp: "2026-07-01T00:00:01Z",
+        },
+      ],
+      config,
+      "/repo",
+    )
+    const layer = state.asSessionLayer()
+    expect(layer.allowedPaths).toEqual([
+      { tags: ["mutating"], path: "/repo/src" },
+      { tags: ["readonly"], path: "/etc/hosts" },
+    ])
+  })
+
+  it("no-ops modes, taggingRules, toolMetadata (session doesn't author them)", () => {
+    const config = makeConfig()
+    const state = RuntimeState.fromTimeline(
+      [
+        {
+          type: "addRuntimeGrant",
+          grant: { modeName: "default", toolName: "read" },
+          timestamp: "2026-07-01T00:00:00Z",
+        },
+      ],
+      config,
+      "/repo",
+    )
+    const layer = state.asSessionLayer()
+    // Empty objects/arrays — the session's overrides don't touch
+    // these. composeConfig's deep merge leaves them at the
+    // loaded-config value.
+    expect(layer.modes).toEqual({})
+    expect(layer.taggingRules).toEqual([])
+    expect(layer.toolMetadata).toEqual({})
+  })
+})

@@ -106,16 +106,26 @@ The `//` prefix marks a **root task** — runs once at the repo root, not per pa
 
 ## Script naming conventions
 
-| Script         | What it does                                              |
-| -------------- | --------------------------------------------------------- |
-| `typecheck`    | root: `pnpm turbo typecheck`; per-package: `tsc --noEmit` |
-| `lint`         | root: `eslint . --max-warnings=0 --cache ...` (root only) |
-| `format:check` | root: `prettier --check .` (root only)                    |
-| `format`       | root: `prettier --write .` (root only)                    |
-| `test`         | root: `pnpm turbo test`; per-package: `vitest run`        |
-| `check`        | root: `pnpm turbo //#format:check //#lint typecheck test` |
+| Script         | What it does                                                                                                            |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `typecheck`    | root: `pnpm turbo typecheck`; per-package: `tsc --noEmit`                                                               |
+| `lint`         | root: `eslint . --max-warnings=0 --cache ...` (root only)                                                               |
+| `format:check` | root: `sh -c 'set -x; if [ $# -gt 0 ]; then pnpm exec prettier --check "$@"; else pnpm exec prettier --check .; fi' --` |
+| `format`       | root: `sh -c 'set -x; if [ $# -gt 0 ]; then pnpm exec prettier --write "$@"; else pnpm exec prettier --write .; fi' --` |
+| `test`         | root: `pnpm turbo test`; per-package: `vitest run`                                                                      |
+| `check`        | root: `pnpm turbo //#format:check //#lint typecheck test`                                                               |
 
 `check` is the canonical "run everything" command. It invokes all four Turbo tasks; the first two are root-level singletons, the latter two fan out per package. Cache hits make subsequent runs near-instant.
+
+### `format` and `format:check` accept an optional path argument
+
+The `format` / `format:check` scripts wrap prettier in `sh -c` so they accept an optional path argument. Default behavior is "format the whole repo": `pnpm format` runs `prettier --write .`. To format a single path, drop the `--` separator (pnpm forwards positional args without it): `pnpm format packages/pi-do-it-right`. The script's sentinel pattern is:
+
+```sh
+sh -c 'set -x; if [ $# -gt 0 ]; then pnpm exec prettier --write "$@"; else pnpm exec prettier --write .; fi' --
+```
+
+`--` ends sh's own arg list before forwarding to prettier. The `$#` check distinguishes "no args" (use `.`) from "with args" (use them). The naive form `sh -c '... "${1:-.}"' --` breaks when invoked via `pnpm format -- path/to/dir`: pnpm forwards `--` to prettier (the script's `${1}` becomes `--`, not the path), and prettier rejects it as "No file path given." The conditional variant above avoids that trap.
 
 # Why this works
 
